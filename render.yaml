@@ -1,0 +1,32 @@
+# Render Blueprint for https://adlens.onrender.com
+services:
+  - type: web
+    name: adlens
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: ENV
+        value: prod
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: FRONTEND_URL
+        value: https://adlens.onrender.com
+      - key: BASE_URL
+        value: https://adlens.onrender.com
+      - key: META_REDIRECT_URI
+        value: https://adlens.onrender.com/auth/facebook/callback
+      - key: FERNET_KEY
+        sync: false
+      - key: META_APP_ID
+        sync: false
+      - key: META_APP_SECRET
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: adlens-db
+          property: connectionString
+databases:
+  - name: adlens-db
+    plan: free

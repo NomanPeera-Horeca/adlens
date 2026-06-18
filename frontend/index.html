@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AdLens — creative intelligence for Meta ads</title>
+<style>
+  :root{
+    --ink:#0F1B2D;--paper:#F5F6F8;--card:#fff;--line:#E5E8EE;--text:#1B2433;
+    --muted:#6B7585;--faint:#9AA3B2;--red:#D7263D;--green:#16A34A;--green-bg:#E7F6EC;
+    --amber:#C9821B;--amber-bg:#FBF1DF;--red-bg:#FCE9EC;--slate-bg:#EEF1F6;
+    --shadow:0 1px 2px rgba(15,27,45,.06),0 4px 16px rgba(15,27,45,.05);
+  }
+  *{box-sizing:border-box}html,body{margin:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Arial,sans-serif;background:var(--paper);color:var(--text);font-size:14px;line-height:1.4;-webkit-font-smoothing:antialiased}
+  .num{font-variant-numeric:tabular-nums}
+  button{font-family:inherit;cursor:pointer}
+  .wrap{max-width:1500px;margin:0 auto;padding:18px 22px 80px}
+  header.bar{background:var(--ink);color:#fff;border-radius:14px;padding:16px 18px;display:flex;flex-wrap:wrap;align-items:center;gap:14px;box-shadow:var(--shadow)}
+  .brandmark{display:flex;align-items:center;gap:10px;margin-right:6px}
+  .dot{width:11px;height:11px;border-radius:3px;background:var(--red);transform:rotate(45deg)}
+  .brandmark h1{font-size:16px;margin:0;font-weight:700;letter-spacing:.2px}
+  .brandmark span{font-size:11px;color:#9fb0c7;display:block;font-weight:500;letter-spacing:.3px}
+  .field{display:flex;flex-direction:column;gap:3px}
+  label{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:#9fb0c7;font-weight:600}
+  header select{background:#16243a;border:1px solid #2a3b56;color:#fff;border-radius:8px;padding:8px 10px;font-size:13px;min-width:170px;outline:none}
+  .grow{flex:1}
+  .btn{border:none;border-radius:8px;padding:9px 15px;font-size:13px;font-weight:600;background:#22344f;color:#fff;border:1px solid #33476a;white-space:nowrap}
+  .btn:hover{background:#2b4060}
+  .btn.fb{background:#1877F2;border-color:#1877F2}
+  .btn.primary{background:var(--red);border-color:var(--red)}
+  .btn.ghost{background:transparent}
+  .who{font-size:12px;color:#9fb0c7;display:flex;align-items:center;gap:8px}
+  .who .av{width:24px;height:24px;border-radius:50%;background:#22344f;display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff;font-size:12px}
+
+  .kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin:16px 0}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:13px 15px;box-shadow:var(--shadow)}
+  .k-label{font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);font-weight:600}
+  .k-val{font-size:21px;font-weight:700;margin-top:5px;letter-spacing:-.4px}
+  .k-sub{font-size:11px;color:var(--faint);margin-top:2px}
+
+  .controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:14px}
+  .seg{display:inline-flex;background:var(--card);border:1px solid var(--line);border-radius:9px;overflow:hidden;box-shadow:var(--shadow)}
+  .seg button{background:transparent;border:none;padding:8px 13px;font-size:12.5px;font-weight:600;color:var(--muted)}
+  .seg button.on{background:var(--ink);color:#fff}
+  .controls select,.controls input{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size:12.5px;color:var(--text);box-shadow:var(--shadow);outline:none}
+  .pill{font-size:11px;font-weight:600;padding:6px 10px;border-radius:20px;border:1px solid var(--line);background:var(--card);color:var(--muted)}
+  .pill.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .pill.scale.on{background:var(--green);border-color:var(--green)}
+  .pill.watch.on{background:var(--amber);border-color:var(--amber)}
+  .pill.kill.on{background:var(--red);border-color:var(--red)}
+
+  .notice{background:var(--amber-bg);border:1px solid #efd9ad;color:#7a5410;border-radius:11px;padding:11px 14px;font-size:13px;margin-bottom:14px;display:none}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(248px,1fr));gap:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:var(--shadow);border-left:4px solid var(--line);transition:transform .08s}
+  .card:hover{transform:translateY(-2px)}
+  .card.v-scale{border-left-color:var(--green)}.card.v-watch{border-left-color:var(--amber)}
+  .card.v-kill{border-left-color:var(--red)}.card.v-data{border-left-color:#c2c9d4}
+  .thumb{aspect-ratio:1/1;background:var(--slate-bg);display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative}
+  .thumb img{width:100%;height:100%;object-fit:cover}
+  .thumb .ph{color:var(--faint);font-size:11px;font-weight:600}
+  .badge{position:absolute;top:10px;right:10px;font-size:10.5px;font-weight:800;letter-spacing:.5px;padding:5px 9px;border-radius:20px;text-transform:uppercase;color:#fff}
+  .badge.scale{background:var(--green)}.badge.watch{background:var(--amber)}.badge.kill{background:var(--red)}.badge.data{background:#8b95a5}
+  .card-body{padding:12px 14px 14px}
+  .c-name{font-size:13px;font-weight:700;line-height:1.3;height:34px;overflow:hidden;margin-bottom:9px}
+  .c-meta{font-size:10.5px;color:var(--faint);margin-bottom:9px;text-transform:uppercase;letter-spacing:.4px;font-weight:600}
+  .rows{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px}
+  .row{display:flex;justify-content:space-between;font-size:12px}.row .l{color:var(--muted)}.row .vv{font-weight:700}
+  .hot{color:var(--green)}.cold{color:var(--red)}
+  .tablewrap{background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);overflow:auto}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:11px 13px;text-align:right;white-space:nowrap;border-bottom:1px solid var(--line)}
+  th:first-child,td:first-child{text-align:left}
+  th{font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700;cursor:pointer;background:#fafbfc;position:sticky;top:0}
+  td.creative{display:flex;align-items:center;gap:10px;text-align:left}
+  td.creative img,.mini{width:38px;height:38px;border-radius:7px;object-fit:cover;background:var(--slate-bg);flex-shrink:0}
+  .vbadge{display:inline-block;font-size:10px;font-weight:800;letter-spacing:.4px;padding:3px 8px;border-radius:20px;text-transform:uppercase}
+  .vbadge.scale{background:var(--green-bg);color:#0f7a37}.vbadge.watch{background:var(--amber-bg);color:#8a5a0c}
+  .vbadge.kill{background:var(--red-bg);color:#a8132a}.vbadge.data{background:var(--slate-bg);color:#586073}
+  td.good{background:var(--green-bg);font-weight:700}
+  .splash{text-align:center;padding:70px 20px}
+  .splash h2{color:var(--ink);font-size:26px;margin:0 0 10px;letter-spacing:-.5px}
+  .splash p{max-width:540px;margin:0 auto 22px;color:var(--muted);font-size:15px}
+  .splash .row2{display:flex;gap:10px;justify-content:center}
+  .empty{text-align:center;padding:60px 20px;color:var(--muted)}
+  @media(max-width:1100px){.kpis{grid-template-columns:repeat(3,1fr)}}
+  @media(max-width:560px){.kpis{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr 1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="bar">
+    <div class="brandmark"><span class="dot"></span><div><h1>AdLens</h1><span>CREATIVE INTELLIGENCE · META ADS</span></div></div>
+    <div class="field" id="acctField" style="display:none">
+      <label>Ad account</label>
+      <select id="acct"></select>
+    </div>
+    <div class="field" id="rangeField" style="display:none">
+      <label>Date range</label>
+      <select id="range">
+        <option value="last_7d">Last 7 days</option>
+        <option value="last_14d">Last 14 days</option>
+        <option value="last_30d" selected>Last 30 days</option>
+        <option value="last_90d">Last 90 days (Pro)</option>
+        <option value="maximum">Maximum (Pro)</option>
+      </select>
+    </div>
+    <button class="btn primary" id="refresh" style="display:none">Refresh</button>
+    <div class="grow"></div>
+    <div id="userbox"></div>
+  </header>
+
+  <div class="notice" id="trackingNotice"></div>
+  <div class="kpis" id="kpis"></div>
+
+  <div class="controls" id="controls" style="display:none">
+    <div class="seg"><button id="viewCards" class="on">Cards</button><button id="viewTable">Table</button></div>
+    <select id="sort">
+      <option value="spend">Sort: Spend</option><option value="score">Sort: Verdict</option>
+      <option value="roas">Sort: ROAS</option><option value="ctr">Sort: CTR</option>
+      <option value="cpc">Sort: CPC</option><option value="cpm">Sort: CPM</option>
+    </select>
+    <input id="search" placeholder="Filter by name…" style="min-width:200px" />
+    <span style="width:6px"></span>
+    <span class="pill on" data-f="all">All</span>
+    <span class="pill scale" data-f="scale">🟢 Scale</span>
+    <span class="pill watch" data-f="watch">🟡 Watch</span>
+    <span class="pill kill" data-f="kill">🔴 Kill</span>
+  </div>
+
+  <div id="output">
+    <div class="splash" id="splash">
+      <h2>Know which creatives to scale. In ten seconds.</h2>
+      <p>Connect Meta and AdLens pulls every creative, scores each one — Scale, Watch, or Kill — and flags broken conversion tracking before it burns your budget.</p>
+      <div class="row2">
+        <button class="btn fb" id="connect">Connect Facebook</button>
+        <button class="btn ghost" id="demo" style="border:1px solid var(--line);color:var(--muted);background:var(--card)">See demo</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $=s=>document.querySelector(s);
+const usd=n=>(n==null||isNaN(n))?"—":"$"+Number(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+const usd0=n=>(n==null||isNaN(n))?"—":"$"+Number(n).toLocaleString("en-US",{maximumFractionDigits:0});
+const pct=n=>(n==null||isNaN(n))?"—":Number(n).toFixed(2)+"%";
+const num=n=>(n==null||isNaN(n))?"—":Number(n).toLocaleString("en-US");
+const esc=s=>(s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const trunc=(s,n)=>s&&s.length>n?s.slice(0,n-1)+"…":s;
+
+let ADS=[],VIEW="cards",SORT="spend",FILTER="all",SEARCH="",ME=null;
+const api=(p,o={})=>fetch(p,{credentials:"include",...o}).then(r=>r.json());
+
+async function boot(){
+  ME=await api("/api/me");
+  renderUserbox();
+  if(ME.authenticated && ME.connected){ $("#splash")&&($("#splash").remove()); await loadAccounts(); }
+}
+function renderUserbox(){
+  const b=$("#userbox");
+  if(ME&&ME.authenticated){
+    const initial=(ME.name||"?").trim().charAt(0).toUpperCase();
+    b.innerHTML=`<div class="who"><span class="av">${initial}</span><span>${esc(ME.name||"")} · ${ME.plan==="pro"?"Pro":"Free"}</span>
+      <button class="btn ghost" id="logout" style="padding:6px 10px">Sign out</button></div>`;
+    $("#logout").onclick=async()=>{await api("/api/logout",{method:"POST"});location.reload();};
+  } else { b.innerHTML=""; }
+}
+async function loadAccounts(){
+  const r=await api("/api/accounts");
+  if(r.detail){ alert("Reconnect needed: "+r.detail); return; }
+  const sel=$("#acct"); sel.innerHTML=(r.accounts||[]).map(a=>`<option value="${a.account_id}">${esc(a.name||a.account_id)}</option>`).join("");
+  $("#acctField").style.display=$("#rangeField").style.display="flex"; $("#refresh").style.display="inline-block";
+  if((r.accounts||[]).length) loadInsights();
+}
+async function loadInsights(){
+  const account=$("#acct").value, range=$("#range").value;
+  $("#output").innerHTML=`<div class="empty">Pulling creatives from Meta…</div>`;
+  const r=await api(`/api/insights?account=${encodeURIComponent(account)}&range=${range}`);
+  if(r.detail){ $("#output").innerHTML=`<div class="empty">${esc(r.detail)}</div>`; return; }
+  ADS=r.ads||[]; render();
+}
+
+function render(){
+  const hasConv=ADS.some(a=>(a.purchases||0)>0||(a.pvalue||0)>0);
+  const note=$("#trackingNotice");
+  if(ADS.length&&!hasConv){note.style.display="block";note.innerHTML="<b>Heads up:</b> Meta is returning no purchase/ROAS data — conversion tracking (pixel or Conversions API) isn't reporting sales. Verdicts use <b>engagement efficiency</b> (CTR vs CPC) until that's fixed, then switch to ROAS automatically.";}
+  else note.style.display="none";
+
+  const tot=ADS.reduce((s,a)=>s+a.spend,0),pv=ADS.reduce((s,a)=>s+(a.pvalue||0),0);
+  const imp=ADS.reduce((s,a)=>s+(a.impressions||0),0),clk=ADS.reduce((s,a)=>s+(a.clicks||0),0);
+  const wins=ADS.filter(a=>a.verdict.key==="scale").length,kills=ADS.filter(a=>a.verdict.key==="kill").length;
+  $("#kpis").innerHTML=!ADS.length?"":[
+    ["Total spend",usd0(tot),ADS.length+" creatives"],
+    ["Purchase value",pv>0?usd0(pv):"—",hasConv?"":"tracking off"],
+    ["Blended ROAS",hasConv?(tot>0?(pv/tot).toFixed(2):"0")+"x":"—",hasConv?"":"no sales data"],
+    ["Avg CTR",pct(imp>0?clk/imp*100:0),num(clk)+" clicks"],
+    ["🟢 Scaling",wins,"strong creatives"],
+    ["🔴 Killing",kills,"draining budget"]
+  ].map(k=>`<div class="kpi"><div class="k-label">${k[0]}</div><div class="k-val num">${k[1]}</div><div class="k-sub">${k[2]}</div></div>`).join("");
+  $("#controls").style.display=ADS.length?"flex":"none";
+
+  let list=ADS.filter(a=>(FILTER==="all"||a.verdict.key===FILTER)&&(!SEARCH||a.name.toLowerCase().includes(SEARCH.toLowerCase())));
+  list.sort((x,y)=>SORT==="score"?y.verdict.score-x.verdict.score:(y[SORT]||0)-(x[SORT]||0));
+  const out=$("#output");
+  if(!ADS.length){out.innerHTML=`<div class="empty">No creatives with spend in this range.</div>`;return;}
+  if(!list.length){out.innerHTML=`<div class="empty">No creatives match.</div>`;return;}
+  out.innerHTML=VIEW==="cards"?`<div class="grid">${list.map(cardHTML).join("")}</div>`:tableHTML(list);
+}
+function cardHTML(a){
+  const v=a.verdict, t=a.thumb?`<img src="${a.thumb}" loading="lazy" onerror="this.outerHTML='<div class=ph>No preview</div>'">`:`<div class="ph">No preview</div>`;
+  const ctrCls=a.ctr>=4?"hot":(a.ctr<1.5?"cold":"");
+  return `<div class="card v-${v.key}"><div class="thumb">${t}<span class="badge ${v.key}">${v.label}</span></div>
+   <div class="card-body"><div class="c-name" title="${esc(a.name)}">${esc(a.name)}</div>
+   <div class="c-meta num">${num(a.impressions)} impr · ${num(a.clicks)} clicks</div>
+   <div class="rows">
+     <div class="row"><span class="l">Spend</span><span class="vv num">${usd(a.spend)}</span></div>
+     <div class="row"><span class="l">ROAS</span><span class="vv num">${a.roas!=null?a.roas.toFixed(2)+"x":"—"}</span></div>
+     <div class="row"><span class="l">CTR</span><span class="vv num ${ctrCls}">${pct(a.ctr)}</span></div>
+     <div class="row"><span class="l">CPC</span><span class="vv num">${usd(a.cpc)}</span></div>
+     <div class="row"><span class="l">CPM</span><span class="vv num">${usd(a.cpm)}</span></div>
+     <div class="row"><span class="l">Purch.</span><span class="vv num">${a.purchases?num(a.purchases):"—"}</span></div>
+   </div></div></div>`;
+}
+function tableHTML(list){
+  const cols=[["name","Creative"],["score","Verdict"],["spend","Spend"],["roas","ROAS"],["pvalue","Purch. value"],["ctr","CTR"],["cpc","CPC"],["cpm","CPM"],["purchases","Purchases"]];
+  const th=cols.map(c=>`<th data-col="${c[0]}">${c[1]}</th>`).join("");
+  const rows=list.map(a=>{const v=a.verdict,m=a.thumb?`<img src="${a.thumb}" onerror="this.outerHTML='<div class=mini></div>'">`:`<div class="mini"></div>`;
+    return `<tr><td class="creative">${m}<span>${esc(trunc(a.name,40))}</span></td>
+    <td style="text-align:left"><span class="vbadge ${v.key}">${v.label}</span></td>
+    <td class="num">${usd(a.spend)}</td><td class="num">${a.roas!=null?a.roas.toFixed(2)+"x":"—"}</td>
+    <td class="num">${a.pvalue?usd(a.pvalue):"—"}</td><td class="num ${a.ctr>=4?"good":""}">${pct(a.ctr)}</td>
+    <td class="num">${usd(a.cpc)}</td><td class="num">${usd(a.cpm)}</td><td class="num">${a.purchases?num(a.purchases):"—"}</td></tr>`;}).join("");
+  return `<div class="tablewrap"><table><thead><tr>${th}</tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+function demoData(){
+  const s=[["New Engagement Ad — fryers",547.41,9.44,0.17,15.77,42000],["New Engagement Ad — display case",529.49,5.66,0.35,19.77,31000],
+  ["medalalldoor-us-call",835.58,2.2,1.03,22.75,38000],["Texashotelsupply - platform beds A",259.14,4.14,0.51,21.16,12200],
+  ["walkinref1011 — Walk-in coolers",201.28,2.36,0.38,8.88,22600],["Test - restaurantsetup1403",412.24,2.4,0.97,23.19,18000],
+  ["New Engagement Ad — bulk order",409.33,3.91,0.66,25.97,16000],["New Engagement Ad — ranges",177.46,1.76,0.85,14.91,11900],
+  ["restaurantsetup1403 — design",143.13,1.63,1.51,24.63,5800],["Restaurant Startup Package",71.20,1.38,1.62,22.25,3200]];
+  ADS=s.map(r=>({name:r[0],thumb:null,spend:r[1],ctr:r[2],cpc:r[3],cpm:r[4],impressions:r[5],clicks:Math.round(r[5]*r[2]/100),purchases:0,pvalue:0,roas:null}));
+  scoreLocally(); $("#splash")&&$("#splash").remove(); render();
+}
+// mirror of backend scoring so the demo works with no server data
+function scoreLocally(){
+  const min=60,killSpend=150;const judged=ADS.filter(a=>a.spend>=min);
+  const avg=(arr,k)=>{const v=arr.map(a=>a[k]).filter(x=>x>0);return v.length?v.reduce((s,x)=>s+x,0)/v.length:0;};
+  const aC=avg(judged,"ctr")||avg(ADS,"ctr"),aP=avg(judged,"cpc")||avg(ADS,"cpc");
+  ADS.forEach(a=>{if(a.spend<min){a.verdict={key:"data",label:"Need data",score:0};return;}
+    const cr=aC?a.ctr/aC:1,pp=(aP&&a.cpc)?a.cpc/aP:1,sc=cr*120-pp*60;
+    a.verdict=(cr>=1.15&&pp<=0.95)?{key:"scale",label:"Scale",score:sc}:(cr<0.6||(a.spend>killSpend&&cr<0.85))?{key:"kill",label:"Kill",score:sc}:{key:"watch",label:"Watch",score:sc};});
+}
+
+document.addEventListener("click",e=>{
+  if(e.target.id==="connect") location.href="/auth/facebook/login";
+  if(e.target.id==="demo") demoData();
+  if(e.target.id==="refresh") loadInsights();
+  const p=e.target.closest(".pill"); if(p){FILTER=p.dataset.f;document.querySelectorAll(".pill").forEach(x=>x.classList.remove("on"));p.classList.add("on");render();}
+  const th=e.target.closest("th[data-col]"); if(th){SORT=th.dataset.col==="name"?"spend":th.dataset.col;$("#sort").value=["score","spend","roas","ctr","cpc","cpm"].includes(SORT)?SORT:"spend";render();}
+});
+$("#viewCards").onclick=()=>{VIEW="cards";$("#viewCards").classList.add("on");$("#viewTable").classList.remove("on");render();};
+$("#viewTable").onclick=()=>{VIEW="table";$("#viewTable").classList.add("on");$("#viewCards").classList.remove("on");render();};
+$("#sort").onchange=e=>{SORT=e.target.value;render();};
+$("#search").oninput=e=>{SEARCH=e.target.value;render();};
+$("#acct").onchange=loadInsights; $("#range").onchange=loadInsights;
+boot();
+</script>
+</body>
+</html>
