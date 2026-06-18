@@ -3,6 +3,7 @@ Thin async client over the Meta Marketing API.
 All calls go through the user's stored token — we never expose the app secret
 to the browser, and the token never leaves the server after login.
 """
+import json
 import re
 from datetime import datetime, timezone
 
@@ -13,6 +14,17 @@ from .dates import insights_params
 
 BASE = f"https://graph.facebook.com/{settings.META_API_VERSION}"
 PURCHASE_TYPES = ["omni_purchase", "purchase", "offsite_conversion.fb_pixel_purchase"]
+CREATIVE_FIELDS = "id,image_hash,image_url,thumbnail_url,object_story_spec,asset_feed_spec"
+AD_DETAIL_FIELDS = (
+    f"id,created_time,effective_status,adset{{start_time}},creative{{{CREATIVE_FIELDS}}}"
+)
+PREVIEW_FORMATS = (
+    "DESKTOP_FEED_STANDARD",
+    "MOBILE_FEED_STANDARD",
+    "INSTAGRAM_STANDARD",
+    "INSTAGRAM_STORY",
+)
+MIN_IMAGE_PIXELS = 90_000  # ~300×300 — reject tiny Meta thumbs when we can
 
 
 def login_dialog_url(state: str) -> str:
@@ -209,13 +221,92 @@ def _fbcdn_variants(url: str) -> list[str]:
             out.append(u)
 
     add(url)
-    upgraded = re.sub(
-        r"([/_-])([ps])(\d+)x(\d+)",
-        lambda m: f"{m.group(1)}{m.group(2)}720x720" if max(int(m.group(3)), int(m.group(4))) < 400 else m.group(0),
-        url,
-    )
-    add(upgraded)
+
+    def upsize(match: re.Match) -> str:
+        w, h = int(match.group(3)), int(match.group(4))
+        if max(w, h) >= 600:
+            return match.group(0)
+        return f"{match.group(1)}{match.group(2)}1200x1200"
+
+    add(re.sub(r"([/_-])([ps])(\d+)x(\d+)", upsize, url))
     add(re.sub(r"([/_-])[ps]\d+x\d+", "", url))
+    add(re.sub(r"stp=dst-jpg_[ps]\d+x\d+(_q\d+)?", r"stp=dst-jpg_s1200x1200\1", url))
+    add(re.sub(r"([?&](?:width|w)=)\d+", r"\g<1>1200", url))
+    add(re.sub(r"([?&](?:height|h)=)\d+", r"\g<1>1200", url))
+    return out
+
+
+def _dimensions_from_url(url: str) -> tuple[int, int] | None:
+    for pat in (
+        r"[/_-][ps](\d+)x(\d+)",
+        r"stp=dst-jpg_[ps](\d+)x(\d+)",
+        r"[?&](?:width|w)=(\d+).*?[?&](?:height|h)=(\d+)",
+    ):
+        m = re.search(pat, url)
+        if m:
+            return int(m.group(1)), int(m.group(2))
+    return None
+
+
+def _dimensions_from_bytes(data: bytes) -> tuple[int, int] | None:
+    if len(data) < 24:
+        return None
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return int.from_bytes(data[6:8], "little"), int.from_bytes(data[8:10], "little")
+    if data[:2] == b"\xff\xd8":
+        i = 2
+        while i < len(data) - 9:
+            if data[i] != 0xFF:
+                i += 1
+                continue
+            marker = data[i + 1]
+            if marker in (0xC0, 0xC2):
+                return int.from_bytes(data[i + 7 : i + 9], "big"), int.from_bytes(data[i + 5 : i + 7], "big")
+            if marker == 0xD9:
+                break
+            seg_len = int.from_bytes(data[i + 2 : i + 4], "big")
+            i += 2 + seg_len
+    return None
+
+
+def _image_score(data: bytes, url: str) -> tuple[int, int, int]:
+    dims = _dimensions_from_bytes(data) or _dimensions_from_url(url)
+    if dims:
+        return dims[0] * dims[1], dims[0], dims[1]
+    return len(data), 0, 0
+
+
+def _collect_image_hashes(creative: dict) -> list[str]:
+    if not creative:
+        return []
+    hashes: list[str] = []
+
+    def add(val):
+        if val and val not in hashes:
+            hashes.append(str(val))
+
+    add(creative.get("image_hash"))
+    oss = creative.get("object_story_spec") or {}
+    for block in (oss.get("link_data"), oss.get("photo_data"), oss.get("video_data")):
+        if isinstance(block, dict):
+            add(block.get("image_hash"))
+    for att in (oss.get("link_data") or {}).get("child_attachments") or []:
+        add(att.get("image_hash"))
+    for img in (creative.get("asset_feed_spec") or {}).get("images") or []:
+        add(img.get("hash"))
+    return hashes
+
+
+def _dedupe_urls(urls: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for url in urls:
+        for variant in _fbcdn_variants(url):
+            if variant not in seen:
+                seen.add(variant)
+                out.append(variant)
     return out
 
 
@@ -255,7 +346,10 @@ def _pick_creative_url(creative: dict, *, allow_thumbnail: bool = True) -> str |
 
 
 async def _fetch_bytes(c: httpx.AsyncClient, url: str) -> tuple[bytes, str] | None:
-    img = await c.get(url)
+    try:
+        img = await c.get(url)
+    except httpx.HTTPError:
+        return None
     if img.status_code != 200:
         return None
     ctype = img.headers.get("content-type") or "image/jpeg"
@@ -264,119 +358,168 @@ async def _fetch_bytes(c: httpx.AsyncClient, url: str) -> tuple[bytes, str] | No
     return img.content, ctype
 
 
-async def _best_from_urls(c: httpx.AsyncClient, urls: list[str]) -> tuple[bytes, str] | None:
-    """Download candidates and return the largest image (sharpest for composites)."""
-    best: tuple[bytes, str] | None = None
-    best_len = 0
+async def _best_image_from_urls(
+    c: httpx.AsyncClient, urls: list[str], *, min_pixels: int = 0,
+) -> tuple[str, bytes, str, int, int] | None:
+    """Download candidates; pick sharpest by pixel area, not file size."""
+    best: tuple[str, bytes, str, int, int] | None = None
+    best_score = 0
     tried: set[str] = set()
-    for url in urls:
-        for variant in _fbcdn_variants(url):
-            if variant in tried:
-                continue
-            tried.add(variant)
-            got = await _fetch_bytes(c, variant)
-            if got and len(got[0]) > best_len:
-                best = got
-                best_len = len(got[0])
+    for url in _dedupe_urls(urls):
+        if url in tried:
+            continue
+        tried.add(url)
+        got = await _fetch_bytes(c, url)
+        if not got:
+            continue
+        data, ctype = got
+        score, w, h = _image_score(data, url)
+        if score < min_pixels:
+            continue
+        if score > best_score:
+            best_score = score
+            best = (url, data, ctype, w, h)
     return best
 
 
-async def _preview_image_urls(c: httpx.AsyncClient, token: str, ad_id: str) -> list[str]:
-    r = await c.get(f"{BASE}/{ad_id}/previews", params={
-        "ad_format": "DESKTOP_FEED_STANDARD",
-        "access_token": token,
-    })
+async def _library_urls_from_hashes(
+    c: httpx.AsyncClient, token: str, account_id: str, hashes: list[str],
+) -> list[str]:
+    if not hashes or not account_id:
+        return []
+    account_id = account_id.replace("act_", "")
+    r = await c.get(
+        f"{BASE}/act_{account_id}/adimages",
+        params={
+            "hashes": json.dumps(hashes),
+            "fields": "hash,url,permalink_url,width,height",
+            "access_token": token,
+        },
+    )
+    if r.status_code != 200:
+        return []
+    rows = r.json().get("data") or []
+    rows.sort(key=lambda x: int(x.get("width") or 0) * int(x.get("height") or 0), reverse=True)
+    urls: list[str] = []
+    for row in rows:
+        for key in ("url", "permalink_url"):
+            val = row.get(key)
+            if isinstance(val, str) and val.startswith("http"):
+                urls.append(val)
+    return urls
+
+
+async def _preview_image_urls(
+    c: httpx.AsyncClient, token: str, ad_id: str, ad_format: str,
+) -> list[str]:
+    r = await c.get(
+        f"{BASE}/{ad_id}/previews",
+        params={"ad_format": ad_format, "access_token": token},
+    )
     if r.status_code != 200:
         return []
     urls: list[str] = []
     for item in r.json().get("data") or []:
         body = item.get("body") or ""
-        for match in re.findall(r"""src=["']([^"']+)["']""", body):
+        for match in re.findall(r"""(?:src|data-src)=["']([^"']+)["']""", body):
             url = match.replace("&amp;", "&")
-            if url.startswith("http"):
+            if url.startswith("http") and "facebook.com/tr?" not in url:
                 urls.append(url)
     return urls
 
 
-async def _full_image_from_hash(c: httpx.AsyncClient, token: str, account_id: str, image_hash: str) -> str | None:
-    account_id = account_id.replace("act_", "")
-    r = await c.get(f"{BASE}/act_{account_id}/adimages", params={
-        "hashes": f'["{image_hash}"]',
-        "fields": "url,permalink_url,width,height",
-        "access_token": token,
-    })
+async def _load_creative(c: httpx.AsyncClient, token: str, ad_id: str) -> dict:
+    r = await c.get(f"{BASE}/{ad_id}", params={"fields": AD_DETAIL_FIELDS, "access_token": token})
     if r.status_code != 200:
+        return {}
+    ad = r.json()
+    creative = ad.get("creative") or {}
+    cid = creative.get("id")
+    if cid and not _collect_image_hashes(creative) and not creative.get("image_url"):
+        cr = await c.get(
+            f"{BASE}/{cid}",
+            params={"fields": CREATIVE_FIELDS, "access_token": token},
+        )
+        if cr.status_code == 200:
+            creative = cr.json()
+    return creative
+
+
+async def _resolve_ad_image(
+    c: httpx.AsyncClient, token: str, ad_id: str, account_id: str, creative: dict | None = None,
+) -> dict | None:
+    """Return {url, width, height, data, content_type} for the sharpest available image."""
+    creative = creative or await _load_creative(c, token, ad_id)
+    if not creative:
         return None
-    images = r.json().get("data") or []
-    if not images:
+
+    url_candidates: list[str] = []
+    url_candidates.extend(await _library_urls_from_hashes(
+        c, token, account_id, _collect_image_hashes(creative),
+    ))
+    url_candidates.extend(_collect_creative_urls(creative, allow_thumbnail=False))
+    for fmt in PREVIEW_FORMATS:
+        url_candidates.extend(await _preview_image_urls(c, token, ad_id, fmt))
+    url_candidates.extend(_collect_creative_urls(creative, allow_thumbnail=True))
+
+    best = await _best_image_from_urls(c, url_candidates, min_pixels=MIN_IMAGE_PIXELS)
+    if not best:
+        best = await _best_image_from_urls(c, url_candidates, min_pixels=0)
+    if not best:
         return None
-    best = max(images, key=lambda x: int(x.get("width") or 0))
-    return best.get("url") or best.get("permalink_url")
+
+    url, data, ctype, w, h = best
+    return {"url": url, "width": w, "height": h, "data": data, "content_type": ctype}
 
 
 async def ad_image_source(token: str, ad_id: str, account_id: str = "") -> tuple[bytes, str] | None:
     """Fetch highest-res creative image bytes server-side."""
-    fields = "creative{id,image_url,thumbnail_url,image_hash,object_story_spec,asset_feed_spec}"
-    async with httpx.AsyncClient(timeout=45, follow_redirects=True) as c:
-        r = await c.get(f"{BASE}/{ad_id}", params={"fields": fields, "access_token": token})
-        creative = r.json().get("creative") or {} if r.status_code == 200 else {}
-
-        if account_id and creative.get("image_hash"):
-            lib_url = await _full_image_from_hash(c, token, account_id, creative["image_hash"])
-            if lib_url:
-                got = await _fetch_bytes(c, lib_url)
-                if got:
-                    return got
-
-        got = await _best_from_urls(c, _collect_creative_urls(creative, allow_thumbnail=False))
-        if got:
-            return got
-
-        got = await _best_from_urls(c, _collect_creative_urls(creative, allow_thumbnail=True))
-        if got:
-            return got
-
-        preview_urls = await _preview_image_urls(c, token, ad_id)
-        return await _best_from_urls(c, preview_urls)
-    return None
+    async with httpx.AsyncClient(timeout=60, follow_redirects=True) as c:
+        resolved = await _resolve_ad_image(c, token, ad_id, account_id)
+        if not resolved:
+            return None
+        return resolved["data"], resolved["content_type"]
 
 
 async def fetch_ads_meta(token: str, account_id: str, ad_ids: list[str] | None = None) -> dict[str, dict]:
-    """Per-ad metadata: created time, delivery status, optional thumb fallback."""
+    """Per-ad metadata: created time, delivery status, resolved image URL."""
     account_id = account_id.replace("act_", "")
-    fields = (
-        "id,created_time,effective_status,"
-        "adset{start_time},"
-        "creative{thumbnail_url,image_url,object_story_spec}"
-    )
     out: dict[str, dict] = {}
     ids = [str(i) for i in (ad_ids or []) if i]
-    async with httpx.AsyncClient(timeout=60) as c:
+    async with httpx.AsyncClient(timeout=90, follow_redirects=True) as c:
         if ids:
             for ad_id in ids:
-                r = await c.get(f"{BASE}/{ad_id}", params={"fields": fields, "access_token": token})
+                r = await c.get(
+                    f"{BASE}/{ad_id}",
+                    params={"fields": AD_DETAIL_FIELDS, "access_token": token},
+                )
                 if r.status_code != 200:
                     continue
                 ad = r.json()
-                img = _pick_creative_url(ad.get("creative") or {})
+                creative = ad.get("creative") or {}
+                resolved = await _resolve_ad_image(c, token, ad_id, account_id, creative)
                 out[ad_id] = {
-                    "thumb": img,
+                    "thumb": resolved["url"] if resolved else _pick_creative_url(creative),
+                    "image": resolved,
                     "created_time": ad.get("created_time"),
                     "effective_status": ad.get("effective_status"),
                     "adset_start": (ad.get("adset") or {}).get("start_time"),
                 }
             return out
         url = f"{BASE}/act_{account_id}/ads"
-        params = {"fields": fields, "limit": 500, "access_token": token}
+        params = {"fields": AD_DETAIL_FIELDS, "limit": 500, "access_token": token}
         while url:
             r = await c.get(url, params=params)
             if r.status_code != 200:
                 break
             j = r.json()
             for ad in j.get("data", []):
-                img = _pick_creative_url(ad.get("creative") or {})
-                out[ad["id"]] = {
-                    "thumb": img,
+                ad_id = ad["id"]
+                creative = ad.get("creative") or {}
+                resolved = await _resolve_ad_image(c, token, ad_id, account_id, creative)
+                out[ad_id] = {
+                    "thumb": resolved["url"] if resolved else _pick_creative_url(creative),
+                    "image": resolved,
                     "created_time": ad.get("created_time"),
                     "effective_status": ad.get("effective_status"),
                     "adset_start": (ad.get("adset") or {}).get("start_time"),
@@ -453,10 +596,13 @@ def normalize(rows: list[dict], ad_meta: dict, account_id: str = "") -> list[dic
             roas = pvalue / spend
         thumb = None
         info = ad_meta.get(ad_id) or {}
-        if ad_id and account_id:
-            thumb = f"/api/ad-image?account={account_id}&ad={ad_id}"
-        elif ad_id and info.get("thumb"):
+        resolved = info.get("image") or {}
+        if isinstance(resolved, dict) and resolved.get("url"):
+            thumb = resolved["url"]
+        elif info.get("thumb"):
             thumb = info["thumb"]
+        elif ad_id and account_id:
+            thumb = f"/api/ad-image?account={account_id}&ad={ad_id}"
         since = _live_since(info)
         days = _days_live(since)
         out.append({
