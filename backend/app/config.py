@@ -39,5 +39,26 @@ class Settings(BaseSettings):
     STRIPE_PRICE_ID: str = ""              # the price for your paid plan
     STRIPE_WEBHOOK_SECRET: str = ""
 
+    # --- Insights cache ---
+    CACHE_TTL_FREE_MIN: int = 60           # free tier: refresh at most hourly
+    CACHE_TTL_PRO: int = 15                # pro tier: refresh every 15 min
+
+    # --- Admin bypass (comma-separated; gets Pro features, shows as Admin) ---
+    ADMIN_EMAILS: str = "nomanpeera@gmail.com"
+    ADMIN_FB_IDS: str = ""
+
+    @property
+    def meta_redirect_uri(self) -> str:
+        """Use explicit META_REDIRECT_URI, or derive from BASE_URL in prod."""
+        default = "http://localhost:8000/auth/facebook/callback"
+        if self.META_REDIRECT_URI != default:
+            return self.META_REDIRECT_URI
+        if self.BASE_URL.rstrip("/") != "http://localhost:8000":
+            return f"{self.BASE_URL.rstrip('/')}/auth/facebook/callback"
+        return default
+
+    def meta_configured(self) -> bool:
+        return bool(self.META_APP_ID and self.META_APP_SECRET and self.FERNET_KEY)
+
 
 settings = Settings()

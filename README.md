@@ -22,19 +22,19 @@ required compliance callbacks.
 - `/api/accounts` and `/api/insights` (paginated pull + creative thumbnails).
 - Server-side verdict scoring (ROAS mode, with CTR/CPC fallback when tracking is broken).
 - Plan gating example (free = 30-day window, pro = full history).
-- Stripe checkout hook (stubbed until you add keys).
-- Meta `/deauthorize` + `/data-deletion` callbacks (required for App Review).
+- Stripe checkout + webhook (flips `user.plan` to `pro` on subscription; downgrades on cancel).
+- Insights caching via `SyncRun` table (hourly for free, 15 min for pro; Refresh forces a new pull).
+- Meta `/deauthorize` + `/data-deletion` callbacks with signed_request handling.
 
 **Left to do before charging money**
 1. **Meta App Review — this is the gate.** To let *other* businesses log in,
    request **Advanced Access** for `ads_read`. Until then the app works only
    for you and testers you add (Development mode). Review needs a screencast,
    a privacy policy URL, and your data-deletion URL (already scaffolded).
-2. **Stripe** — add live keys + a price ID, then finish the webhook to flip
-   `user.plan` to `pro` on successful subscription.
-3. **Caching / background sync** — store insights in a `SyncRun` table and
-   refresh on a schedule instead of hitting Meta on every page load (faster,
-   and respects rate limits as you scale).
+2. **Stripe** — add live keys + a price ID, then point Stripe webhooks at
+   `https://adlens.onrender.com/api/billing/webhook`.
+3. **Background sync** — optional scheduled refresh (e.g. Render cron) so data
+   is warm before users open the dashboard.
 4. **Teams** — add an Organization table so one company = multiple seats.
 5. **Hardening** — token-refresh job, error/retry on Meta calls, logging,
    rate limiting, a real privacy policy + terms.
@@ -83,10 +83,11 @@ server-side with the user's stored token.
 backend/app/
   config.py    env-driven settings
   db.py        engine + session
-  models.py    User (multi-tenant, encrypted token)
+  models.py    User (multi-tenant, encrypted token), SyncRun (cached insights)
   crypto.py    Fernet encrypt/decrypt
   meta.py      Graph API client + normalizer
   scoring.py   the verdict engine (your opinion layer)
+  sync.py      cache layer for insights pulls
   auth.py      Facebook OAuth routes
   main.py      API, billing, compliance, serves frontend
 frontend/
