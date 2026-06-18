@@ -3,6 +3,7 @@ Thin async client over the Meta Marketing API.
 All calls go through the user's stored token — we never expose the app secret
 to the browser, and the token never leaves the server after login.
 """
+import asyncio
 import json
 import re
 from datetime import datetime, timezone
@@ -481,30 +482,75 @@ async def ad_image_source(token: str, ad_id: str, account_id: str = "") -> tuple
         return resolved["data"], resolved["content_type"]
 
 
+async def _best_image_url_fast(
+    c: httpx.AsyncClient, token: str, ad_id: str, account_id: str, creative: dict,
+) -> str | None:
+    """Resolve best image URL without downloading bytes — safe during insights sync."""
+    cid = creative.get("id")
+    if cid and not _collect_image_hashes(creative) and not creative.get("image_url"):
+        cr = await c.get(
+            f"{BASE}/{cid}",
+            params={"fields": CREATIVE_FIELDS, "access_token": token},
+        )
+        if cr.status_code == 200:
+            creative = cr.json()
+
+    library = await _library_urls_from_hashes(
+        c, token, account_id, _collect_image_hashes(creative),
+    )
+    if library:
+        return library[0]
+
+    urls = _dedupe_urls(_collect_creative_urls(creative, allow_thumbnail=False))
+    if urls:
+        return urls[0]
+
+    previews = await _preview_image_urls(c, token, ad_id, PREVIEW_FORMATS[0])
+    if previews:
+        return previews[0]
+
+    urls = _dedupe_urls(_collect_creative_urls(creative, allow_thumbnail=True))
+    return urls[0] if urls else None
+
+
+async def _fetch_one_ad_meta(
+    c: httpx.AsyncClient, token: str, ad_id: str, account_id: str,
+) -> tuple[str, dict] | None:
+    r = await c.get(
+        f"{BASE}/{ad_id}",
+        params={"fields": AD_DETAIL_FIELDS, "access_token": token},
+    )
+    if r.status_code != 200:
+        return None
+    ad = r.json()
+    creative = ad.get("creative") or {}
+    image_url = await _best_image_url_fast(c, token, ad_id, account_id, creative)
+    return ad_id, {
+        "thumb": image_url or _pick_creative_url(creative),
+        "created_time": ad.get("created_time"),
+        "effective_status": ad.get("effective_status"),
+        "adset_start": (ad.get("adset") or {}).get("start_time"),
+    }
+
+
 async def fetch_ads_meta(token: str, account_id: str, ad_ids: list[str] | None = None) -> dict[str, dict]:
-    """Per-ad metadata: created time, delivery status, resolved image URL."""
+    """Per-ad metadata: created time, delivery status, best-effort image URL (no byte downloads)."""
     account_id = account_id.replace("act_", "")
     out: dict[str, dict] = {}
     ids = [str(i) for i in (ad_ids or []) if i]
-    async with httpx.AsyncClient(timeout=90, follow_redirects=True) as c:
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as c:
         if ids:
-            for ad_id in ids:
-                r = await c.get(
-                    f"{BASE}/{ad_id}",
-                    params={"fields": AD_DETAIL_FIELDS, "access_token": token},
-                )
-                if r.status_code != 200:
+            sem = asyncio.Semaphore(8)
+
+            async def bound(ad_id: str):
+                async with sem:
+                    return await _fetch_one_ad_meta(c, token, ad_id, account_id)
+
+            for result in await asyncio.gather(*[bound(i) for i in ids], return_exceptions=True):
+                if isinstance(result, Exception) or not result:
                     continue
-                ad = r.json()
-                creative = ad.get("creative") or {}
-                resolved = await _resolve_ad_image(c, token, ad_id, account_id, creative)
-                out[ad_id] = {
-                    "thumb": resolved["url"] if resolved else _pick_creative_url(creative),
-                    "image": resolved,
-                    "created_time": ad.get("created_time"),
-                    "effective_status": ad.get("effective_status"),
-                    "adset_start": (ad.get("adset") or {}).get("start_time"),
-                }
+                ad_id, info = result
+                out[ad_id] = info
             return out
         url = f"{BASE}/act_{account_id}/ads"
         params = {"fields": AD_DETAIL_FIELDS, "limit": 500, "access_token": token}
@@ -513,17 +559,18 @@ async def fetch_ads_meta(token: str, account_id: str, ad_ids: list[str] | None =
             if r.status_code != 200:
                 break
             j = r.json()
-            for ad in j.get("data", []):
-                ad_id = ad["id"]
-                creative = ad.get("creative") or {}
-                resolved = await _resolve_ad_image(c, token, ad_id, account_id, creative)
-                out[ad_id] = {
-                    "thumb": resolved["url"] if resolved else _pick_creative_url(creative),
-                    "image": resolved,
-                    "created_time": ad.get("created_time"),
-                    "effective_status": ad.get("effective_status"),
-                    "adset_start": (ad.get("adset") or {}).get("start_time"),
-                }
+            page_ids = [ad["id"] for ad in j.get("data", [])]
+            sem = asyncio.Semaphore(8)
+
+            async def bound(ad_id: str):
+                async with sem:
+                    return await _fetch_one_ad_meta(c, token, ad_id, account_id)
+
+            for result in await asyncio.gather(*[bound(i) for i in page_ids], return_exceptions=True):
+                if isinstance(result, Exception) or not result:
+                    continue
+                ad_id, info = result
+                out[ad_id] = info
             url = j.get("paging", {}).get("next")
             params = None
     return out
@@ -596,11 +643,9 @@ def normalize(rows: list[dict], ad_meta: dict, account_id: str = "") -> list[dic
             roas = pvalue / spend
         thumb = None
         info = ad_meta.get(ad_id) or {}
-        resolved = info.get("image") or {}
-        if isinstance(resolved, dict) and resolved.get("url"):
-            thumb = resolved["url"]
-        elif info.get("thumb"):
-            thumb = info["thumb"]
+        fast_url = info.get("thumb")
+        if isinstance(fast_url, str) and fast_url.startswith("http"):
+            thumb = fast_url
         elif ad_id and account_id:
             thumb = f"/api/ad-image?account={account_id}&ad={ad_id}"
         since = _live_since(info)
