@@ -253,6 +253,9 @@ def healthz():
 # ----------------------------- Serve frontend -----------------------------
 # Keep this LAST so it doesn't shadow /api routes.
 import os
-_frontend = os.path.join(os.path.dirname(__file__), "..", "..", "frontend")
+# Prefer frontend copied into backend/ on Render (see render.yaml buildCommand).
+_frontend = os.path.join(os.path.dirname(__file__), "..", "frontend")
+if not os.path.isdir(_frontend):
+    _frontend = os.path.join(os.path.dirname(__file__), "..", "..", "frontend")
 if os.path.isdir(_frontend):
     app.mount("/", StaticFiles(directory=_frontend, html=True), name="frontend")
