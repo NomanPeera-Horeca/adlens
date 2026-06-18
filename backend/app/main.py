@@ -24,6 +24,7 @@ from .models import User
 from . import meta, crypto, sync
 from . import meta_compliance
 from . import admin
+from .dates import FREE_RANGES, PRO_ONLY_RANGES, resolve_date_query
 from .auth import router as auth_router
 
 app = FastAPI(title=settings.APP_NAME)
@@ -97,7 +98,7 @@ async def api_ad_image(
 
 
 def _insights_response(payload: dict, effective_range: str, requested_range: str,
-                       cached: bool, synced_at, stale=False, error=""):
+                       cached: bool, synced_at, stale=False, error="", range_limited=False):
     ads = payload["ads"]
     campaigns = payload["campaigns"]
     out = {
@@ -107,7 +108,7 @@ def _insights_response(payload: dict, effective_range: str, requested_range: str
         "campaign_count": len(campaigns),
         "range": effective_range,
         "requested_range": requested_range,
-        "range_limited": effective_range != requested_range,
+        "range_limited": range_limited or effective_range != requested_range,
         "cached": cached,
         "synced_at": synced_at.isoformat() + "Z" if synced_at else None,
     }
@@ -117,38 +118,52 @@ def _insights_response(payload: dict, effective_range: str, requested_range: str
     return out
 
 
+def _resolve_insights_range(range_key: str, since: str, until: str) -> tuple[str, dict]:
+    try:
+        return resolve_date_query(range_key, since, until)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @app.get("/api/insights")
 async def api_insights(
     account: str = Query(...),
     range: str = Query("last_30d"),
+    since: str = Query(""),
+    until: str = Query(""),
     refresh: bool = Query(False),
     session: Session = Depends(get_session),
     user: User = Depends(current_user),
 ):
-    requested_range = range
-    effective_range = range
+    requested_range = range if range != "custom" else f"custom:{since}:{until}"
+    cache_key, date_query = _resolve_insights_range(range, since, until)
+    effective_key, effective_query = cache_key, date_query
     plan = admin.effective_plan(user)
-    # Gate by plan: free tier sees limited window, pro/admin sees everything.
-    if plan == "free" and range in ("last_90d", "maximum"):
-        effective_range = "last_30d"
+    range_limited = False
+    if plan == "free" and (range in PRO_ONLY_RANGES or range not in FREE_RANGES):
+        effective_key, effective_query = resolve_date_query("last_30d")
+        range_limited = effective_key != cache_key
 
-    cached = sync.get_cached(session, user.id, account, effective_range)
+    cached = sync.get_cached(session, user.id, account, effective_key)
     if cached and sync.is_fresh(cached, plan) and not refresh:
         payload = sync.payload_from_run(cached)
-        return _insights_response(payload, effective_range, requested_range, True, cached.synced_at)
+        return _insights_response(payload, effective_key, requested_range, True, cached.synced_at,
+                                  stale=False, error="", range_limited=range_limited)
 
     token = user_token(user)
     try:
-        run = await sync.fetch_and_store(session, user.id, account, effective_range, token)
+        run = await sync.fetch_and_store(session, user.id, account, effective_key, effective_query, token)
     except Exception as e:
         if cached and cached.status == "success":
             payload = sync.payload_from_run(cached)
-            return _insights_response(payload, effective_range, requested_range, True,
-                                      cached.synced_at, stale=True, error=str(e))
+            return _insights_response(payload, effective_key, requested_range, True,
+                                      cached.synced_at, stale=True, error=str(e),
+                                      range_limited=range_limited)
         raise HTTPException(502, f"Meta error: {e}")
 
     payload = sync.payload_from_run(run)
-    return _insights_response(payload, effective_range, requested_range, False, run.synced_at)
+    return _insights_response(payload, effective_key, requested_range, False, run.synced_at,
+                              range_limited=range_limited)
 
 
 # ----------------------------- Billing -----------------------------

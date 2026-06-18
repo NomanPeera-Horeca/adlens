@@ -24,6 +24,9 @@
   .field{display:flex;flex-direction:column;gap:3px}
   label{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:#9fb0c7;font-weight:600}
   header select{background:#16243a;border:1px solid #2a3b56;color:#fff;border-radius:8px;padding:8px 10px;font-size:13px;min-width:170px;outline:none}
+  header input[type=date]{background:#16243a;border:1px solid #2a3b56;color:#fff;border-radius:8px;padding:7px 10px;font-size:13px;outline:none;color-scheme:dark}
+  .custom-range{display:none;flex-direction:row;align-items:flex-end;gap:8px}
+  .custom-range.open{display:flex}
   .grow{flex:1}
   .btn{border:none;border-radius:8px;padding:9px 15px;font-size:13px;font-weight:600;background:#22344f;color:#fff;border:1px solid #33476a;white-space:nowrap}
   .btn:hover{background:#2b4060}
@@ -58,8 +61,10 @@
   .card.v-scale{border-left-color:var(--green)}.card.v-watch{border-left-color:var(--amber)}
   .card.v-kill{border-left-color:var(--red)}.card.v-data{border-left-color:#c2c9d4}
   .thumb{aspect-ratio:1/1;background:var(--slate-bg);display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative}
-  .thumb img{width:100%;height:100%;object-fit:cover;cursor:zoom-in;image-rendering:auto}
+  .thumb img{width:100%;height:100%;min-width:100%;min-height:100%;object-fit:cover;cursor:zoom-in;image-rendering:auto;display:block}
   .thumb .ph{color:var(--faint);font-size:11px;font-weight:600}
+  .live-badge{position:absolute;bottom:8px;left:8px;background:rgba(15,27,45,.82);color:#fff;font-size:10px;font-weight:700;padding:4px 7px;border-radius:6px;letter-spacing:.2px;backdrop-filter:blur(4px)}
+  .live-meta{color:var(--muted);font-size:10.5px;font-weight:600;margin-bottom:6px}
   .badge{position:absolute;top:10px;right:10px;font-size:10.5px;font-weight:800;letter-spacing:.5px;padding:5px 9px;border-radius:20px;text-transform:uppercase;color:#fff}
   .badge.scale{background:var(--green)}.badge.watch{background:var(--amber)}.badge.kill{background:var(--red)}.badge.data{background:#8b95a5}
   .card-body{padding:12px 14px 14px}
@@ -118,9 +123,18 @@
         <option value="last_7d">Last 7 days</option>
         <option value="last_14d">Last 14 days</option>
         <option value="last_30d" selected>Last 30 days</option>
+        <option value="this_month">Month to date</option>
+        <option value="this_year">Year to date</option>
+        <option value="last_month">Last month</option>
         <option value="last_90d">Last 90 days (Pro)</option>
         <option value="maximum">Maximum (Pro)</option>
+        <option value="custom">Custom range…</option>
       </select>
+    </div>
+    <div class="custom-range" id="customRange">
+      <div class="field"><label>From</label><input type="date" id="since" /></div>
+      <div class="field"><label>To</label><input type="date" id="until" /></div>
+      <button class="btn" id="applyCustom" type="button">Apply</button>
     </div>
     <button class="btn primary" id="refresh" style="display:none">Refresh</button>
     <div class="grow"></div>
@@ -145,7 +159,7 @@
       <option value="">All campaigns</option>
     </select>
     <select id="sort">
-      <option value="spend">Sort: Spend</option><option value="score">Sort: Verdict</option>
+      <option value="spend">Sort: Spend</option><option value="days_live">Sort: Days live</option><option value="score">Sort: Verdict</option>
       <option value="roas">Sort: ROAS</option><option value="ctr">Sort: CTR</option>
       <option value="cpc">Sort: CPC</option><option value="cpm">Sort: CPM</option>
     </select>
@@ -187,6 +201,22 @@ const pct=n=>(n==null||isNaN(n))?"—":Number(n).toFixed(2)+"%";
 const num=n=>(n==null||isNaN(n))?"—":Number(n).toLocaleString("en-US");
 const esc=s=>(s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const trunc=(s,n)=>s&&s.length>n?s.slice(0,n-1)+"…":s;
+function fmtLiveDate(iso){
+  if(!iso) return "";
+  const d=new Date(iso);
+  if(isNaN(d)) return "";
+  const opts={month:"short",day:"numeric"};
+  if(d.getFullYear()!==new Date().getFullYear()) opts.year="numeric";
+  return d.toLocaleDateString(undefined,opts);
+}
+function liveLabel(a,short=false){
+  if(a.days_live==null) return short?"":"—";
+  const days=Number(a.days_live);
+  const unit=days===1?"day":"days";
+  if(short) return `${days}d live`;
+  const since=fmtLiveDate(a.live_since);
+  return `${days} ${unit} live${since?` · since ${since}`:""}`;
+}
 
 let ADS=[],CAMPAIGNS=[],LEVEL=sessionStorage.getItem("adlens_level")||"campaigns",VIEW="cards",SORT="spend",FILTER="all",SEARCH="",CAMP_FILTER="",ME=null,SYNCED_AT=null,CACHED=false,STALE_ERROR="",CAMPAIGN_COUNT=0,RANGE_LIMITED=false;
 if(LEVEL==="creatives") LEVEL="ads"; // legacy
@@ -249,10 +279,41 @@ async function boot(){
 function applyPlanRangeGate(){
   const sel=$("#range"); if(!sel) return;
   const pro=ME&&(ME.effective_plan==="pro"||ME.is_admin);
+  const proOnly=new Set(["last_90d","maximum","last_month","custom"]);
   sel.querySelectorAll("option").forEach(o=>{
-    if(o.value==="last_90d"||o.value==="maximum"){ o.disabled=!pro; o.textContent=o.value==="last_90d"?"Last 90 days"+(pro?"":" (Pro)"):o.textContent; }
+    if(proOnly.has(o.value)){
+      o.disabled=!pro;
+      if(o.value==="last_90d") o.textContent="Last 90 days"+(pro?"":" (Pro)");
+      if(o.value==="maximum") o.textContent="Maximum"+(pro?"":" (Pro)");
+      if(o.value==="last_month") o.textContent="Last month"+(pro?"":" (Pro)");
+      if(o.value==="custom") o.textContent="Custom range…"+(pro?"":" (Pro)");
+    }
   });
-  if(!pro&&(sel.value==="last_90d"||sel.value==="maximum")) sel.value="last_30d";
+  if(!pro&&proOnly.has(sel.value)) sel.value="last_30d";
+  toggleCustomRange();
+}
+function toggleCustomRange(){
+  const custom=$("#range").value==="custom";
+  $("#customRange").classList.toggle("open",custom);
+  if(!custom) return;
+  const until=$("#until"), since=$("#since");
+  if(!until.value){
+    const now=new Date();
+    until.value=now.toISOString().slice(0,10);
+    const start=new Date(now.getFullYear(),now.getMonth(),1);
+    since.value=start.toISOString().slice(0,10);
+  }
+}
+function insightsQuery(force=false){
+  const account=$("#acct").value, range=$("#range").value;
+  let q=`/api/insights?account=${encodeURIComponent(account)}&range=${encodeURIComponent(range)}`;
+  if(range==="custom"){
+    const since=$("#since").value, until=$("#until").value;
+    if(!since||!until) return null;
+    q+=`&since=${encodeURIComponent(since)}&until=${encodeURIComponent(until)}`;
+  }
+  if(force) q+="&refresh=1";
+  return q;
 }
 function renderUserbox(){
   const b=$("#userbox");
@@ -283,9 +344,12 @@ async function loadAccounts(){
   if(accounts.length) loadInsights();
 }
 async function loadInsights(force=false){
-  const account=$("#acct").value, range=$("#range").value;
+  const q=insightsQuery(force);
+  if(!q){
+    alert("Pick a start and end date, then click Apply.");
+    return;
+  }
   $("#output").innerHTML=`<div class="empty">${force?"Refreshing from Meta…":"Loading creatives…"}</div>`;
-  const q=`/api/insights?account=${encodeURIComponent(account)}&range=${range}${force?"&refresh=1":""}`;
   const r=await api(q);
   if(r.detail){ $("#output").innerHTML=`<div class="empty">${esc(r.detail)}</div>`; return; }
   ADS=r.ads||[]; CAMPAIGNS=r.campaigns||[]; SYNCED_AT=r.synced_at||null; CACHED=!!r.cached; STALE_ERROR=(r.stale&&r.error)?r.error:"";
@@ -304,7 +368,7 @@ function render(){
   const note=$("#trackingNotice");
   if(RANGE_LIMITED){
     note.style.display="block"; note.classList.remove("err");
-    note.innerHTML="<b>Free plan:</b> Showing last 30 days only. Upgrade to Pro for 90-day and full history views.";
+    note.innerHTML="<b>Free plan:</b> That date range needs Pro. Showing last 30 days instead. Upgrade for 90-day, custom, and full history views.";
   } else if(STALE_ERROR){
     note.style.display="block";
     note.innerHTML=`<b>Using cached data</b> — Meta sync failed (${esc(STALE_ERROR)}). Showing last good pull from ${fmtSync(SYNCED_AT)}.`;
@@ -334,7 +398,11 @@ function render(){
   if(syncEl) syncEl.textContent=SYNCED_AT?`Updated ${fmtSync(SYNCED_AT)}${CACHED?" · cached":""}`:"";
 
   let list=rows.filter(a=>(FILTER==="all"||a.verdict.key===FILTER)&&(!SEARCH||a.name.toLowerCase().includes(SEARCH.toLowerCase())));
-  list.sort((x,y)=>SORT==="score"?y.verdict.score-x.verdict.score:(y[SORT]||0)-(x[SORT]||0));
+  list.sort((x,y)=>{
+    if(SORT==="score") return y.verdict.score-x.verdict.score;
+    if(SORT==="days_live") return (y.days_live??-1)-(x.days_live??-1);
+    return (y[SORT]||0)-(x[SORT]||0);
+  });
   const out=$("#output");
   const emptyMsg=LEVEL==="campaigns"?"No active campaigns in this ad account. Hit Refresh after deploy.":"No ads with spend in this range"+(CAMP_FILTER?" for this campaign.":"");
   if(!rows.length){out.innerHTML=`<div class="empty">${emptyMsg}</div>`;return;}
@@ -395,9 +463,12 @@ function campaignTableHTML(list){
 function cardHTML(a){
   const v=a.verdict, t=adThumbHTML(a,false);
   const ctrCls=a.ctr>=4?"hot":(a.ctr<1.5?"cold":"");
-  return `<div class="card v-${v.key}"><div class="thumb">${t}<span class="badge ${v.key}">${v.label}</span></div>
+  const live=liveLabel(a), liveShort=liveLabel(a,true);
+  const liveBadge=liveShort?`<span class="live-badge" title="${esc(live)}">${esc(liveShort)}</span>`:"";
+  return `<div class="card v-${v.key}"><div class="thumb">${t}${liveBadge}<span class="badge ${v.key}">${v.label}</span></div>
    <div class="card-body">   <div class="c-name" title="${esc(a.name)}">${esc(a.name)}</div>
    <div class="c-meta">${esc(trunc(a.campaign||"",48))}</div>
+   ${live?`<div class="live-meta">${esc(live)}</div>`:""}
    <div class="c-meta num">${num(a.impressions)} impr · ${num(a.clicks)} clicks</div>
    <div class="rows">
      <div class="row"><span class="l">Spend</span><span class="vv num">${usd(a.spend)}</span></div>
@@ -409,11 +480,12 @@ function cardHTML(a){
    </div></div></div>`;
 }
 function tableHTML(list){
-  const cols=[["name","Creative"],["campaign","Campaign"],["score","Verdict"],["spend","Spend"],["roas","ROAS"],["pvalue","Purch. value"],["ctr","CTR"],["cpc","CPC"],["cpm","CPM"],["purchases","Purchases"]];
+  const cols=[["name","Creative"],["campaign","Campaign"],["days_live","Live"],["score","Verdict"],["spend","Spend"],["roas","ROAS"],["pvalue","Purch. value"],["ctr","CTR"],["cpc","CPC"],["cpm","CPM"],["purchases","Purchases"]];
   const th=cols.map(c=>`<th data-col="${c[0]}">${c[1]}</th>`).join("");
-  const rows=list.map(a=>{const v=a.verdict,m=adThumbHTML(a,true);
+  const rows=list.map(a=>{const v=a.verdict,m=adThumbHTML(a,true), live=liveLabel(a);
     return `<tr><td class="creative">${m}<span>${esc(trunc(a.name,40))}</span></td>
     <td style="text-align:left">${esc(trunc(a.campaign||"",36))}</td>
+    <td class="num" style="text-align:left;white-space:nowrap" title="${esc(live)}">${esc(live)}</td>
     <td style="text-align:left"><span class="vbadge ${v.key}">${v.label}</span></td>
     <td class="num">${usd(a.spend)}</td><td class="num">${a.roas!=null?a.roas.toFixed(2)+"x":"—"}</td>
     <td class="num">${a.pvalue?usd(a.pvalue):"—"}</td><td class="num ${a.ctr>=4?"good":""}">${pct(a.ctr)}</td>
@@ -427,7 +499,7 @@ function demoData(){
   ["walkinref1011 — Walk-in coolers",201.28,2.36,0.38,8.88,22600],["Test - restaurantsetup1403",412.24,2.4,0.97,23.19,18000],
   ["New Engagement Ad — bulk order",409.33,3.91,0.66,25.97,16000],["New Engagement Ad — ranges",177.46,1.76,0.85,14.91,11900],
   ["restaurantsetup1403 — design",143.13,1.63,1.51,24.63,5800],["Restaurant Startup Package",71.20,1.38,1.62,22.25,3200]];
-  ADS=s.map(r=>({name:r[0],thumb:null,spend:r[1],ctr:r[2],cpc:r[3],cpm:r[4],impressions:r[5],clicks:Math.round(r[5]*r[2]/100),purchases:0,pvalue:0,roas:null}));
+  ADS=s.map((r,i)=>({name:r[0],thumb:null,spend:r[1],ctr:r[2],cpc:r[3],cpm:r[4],impressions:r[5],clicks:Math.round(r[5]*r[2]/100),purchases:0,pvalue:0,roas:null,days_live:14+i*3,live_since:new Date(Date.now()-(14+i*3)*864e5).toISOString()}));
   scoreLocally(); $("#splash")&&$("#splash").remove(); render();
 }
 // mirror of backend scoring so the demo works with no server data
@@ -449,7 +521,7 @@ document.addEventListener("click",e=>{
   if(zoom){ e.stopPropagation(); openLightbox(zoom.src, zoom.dataset.caption||zoom.alt); return; }
   const campCard=e.target.closest("[data-campaign]"); if(campCard&&LEVEL==="campaigns") drillIntoCampaign(campCard.dataset.campaign);
   const p=e.target.closest(".pill"); if(p){FILTER=p.dataset.f;document.querySelectorAll(".pill").forEach(x=>x.classList.remove("on"));p.classList.add("on");render();}
-  const th=e.target.closest("th[data-col]"); if(th){SORT=th.dataset.col==="name"?"spend":th.dataset.col;$("#sort").value=["score","spend","roas","ctr","cpc","cpm"].includes(SORT)?SORT:"spend";render();}
+  const th=e.target.closest("th[data-col]"); if(th){SORT=th.dataset.col==="name"?"spend":th.dataset.col;$("#sort").value=["score","spend","days_live","roas","ctr","cpc","cpm"].includes(SORT)?SORT:"spend";render();}
 });
 $("#viewCards").onclick=()=>{VIEW="cards";$("#viewCards").classList.add("on");$("#viewTable").classList.remove("on");render();};
 $("#viewTable").onclick=()=>{VIEW="table";$("#viewTable").classList.add("on");$("#viewCards").classList.remove("on");render();};
@@ -459,7 +531,9 @@ $("#campFilter").onchange=e=>{CAMP_FILTER=e.target.value;render();};
 $("#sort").onchange=e=>{SORT=e.target.value;render();};
 $("#search").oninput=e=>{SEARCH=e.target.value;render();};
 $("#acct").onchange=()=>{localStorage.setItem("adlens_account",$("#acct").value);loadInsights();};
-$("#range").onchange=loadInsights;
+$("#range").onchange=()=>{toggleCustomRange(); if($("#range").value!=="custom") loadInsights();};
+$("#applyCustom").onclick=()=>loadInsights();
+$("#since").onchange=$("#until").onchange=()=>{ if($("#range").value==="custom") loadInsights(); };
 document.addEventListener("keydown",e=>{ if(e.key==="Escape") closeLightbox(); });
 boot();
 </script>

@@ -53,25 +53,26 @@ async def fetch_and_store(
     session: Session,
     user_id: int,
     account_id: str,
-    date_range: str,
+    cache_key: str,
+    date_query: dict,
     token: str,
 ) -> SyncRun:
     account_id = _norm_account(account_id)
-    run = get_cached(session, user_id, account_id, date_range)
+    run = get_cached(session, user_id, account_id, cache_key)
     if not run:
-        run = SyncRun(user_id=user_id, account_id=account_id, date_range=date_range)
+        run = SyncRun(user_id=user_id, account_id=account_id, date_range=cache_key)
     run.status = "pending"
     run.error_message = ""
     session.add(run)
     session.commit()
 
     try:
-        rows = await meta.insights(token, account_id, date_range)
+        rows = await meta.insights(token, account_id, date_query)
         catalog = await meta.list_active_campaigns(token, account_id)
-        camp_rows = await meta.campaign_insights(token, account_id, date_range)
+        camp_rows = await meta.campaign_insights(token, account_id, date_query)
         ad_ids = [r.get("ad_id") for r in rows if r.get("ad_id")]
-        thumbs = await meta.creative_thumbs(token, account_id, ad_ids)
-        ads = scoring.score_all(meta.normalize(rows, thumbs, account_id))
+        ad_meta = await meta.fetch_ads_meta(token, account_id, ad_ids)
+        ads = scoring.score_all(meta.normalize(rows, ad_meta, account_id))
         campaigns = scoring.score_all(meta.merge_active_campaigns(catalog, camp_rows))
         run.ads_json = json.dumps({"ads": ads, "campaigns": campaigns})
         run.status = "success"

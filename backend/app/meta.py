@@ -3,8 +3,13 @@ Thin async client over the Meta Marketing API.
 All calls go through the user's stored token — we never expose the app secret
 to the browser, and the token never leaves the server after login.
 """
+import re
+from datetime import datetime, timezone
+
 import httpx
+
 from .config import settings
+from .dates import insights_params
 
 BASE = f"https://graph.facebook.com/{settings.META_API_VERSION}"
 PURCHASE_TYPES = ["omni_purchase", "purchase", "offsite_conversion.fb_pixel_purchase"]
@@ -74,14 +79,15 @@ async def list_ad_accounts(token: str) -> list[dict]:
     return out
 
 
-async def insights(token: str, account_id: str, date_preset: str = "last_30d") -> list[dict]:
+async def insights(token: str, account_id: str, date_query: dict | None = None) -> list[dict]:
     account_id = account_id.replace("act_", "")
+    date_query = date_query or {"date_preset": "last_30d"}
     fields = ("campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,"
               "spend,impressions,clicks,ctr,cpc,cpm,reach,frequency,"
               "actions,action_values,purchase_roas")
     out, url = [], f"{BASE}/act_{account_id}/insights"
-    params = {"level": "ad", "fields": fields, "date_preset": date_preset,
-              "limit": 500, "access_token": token}
+    params = {"level": "ad", "fields": fields, "limit": 500, "access_token": token}
+    params.update(insights_params(date_query))
     async with httpx.AsyncClient(timeout=60) as c:
         while url:
             r = await c.get(url, params=params)
@@ -119,13 +125,14 @@ async def list_active_campaigns(token: str, account_id: str) -> list[dict]:
     return await _paginate(token, url, params)
 
 
-async def campaign_insights(token: str, account_id: str, date_preset: str = "last_30d") -> list[dict]:
+async def campaign_insights(token: str, account_id: str, date_query: dict | None = None) -> list[dict]:
     account_id = account_id.replace("act_", "")
+    date_query = date_query or {"date_preset": "last_30d"}
     fields = ("campaign_id,campaign_name,spend,impressions,clicks,ctr,cpc,cpm,"
               "actions,action_values,purchase_roas")
     url = f"{BASE}/act_{account_id}/insights"
-    params = {"level": "campaign", "fields": fields, "date_preset": date_preset,
-              "limit": 500, "access_token": token}
+    params = {"level": "campaign", "fields": fields, "limit": 500, "access_token": token}
+    params.update(insights_params(date_query))
     return await _paginate(token, url, params)
 
 
@@ -189,29 +196,62 @@ def merge_active_campaigns(catalog: list[dict], insight_rows: list[dict]) -> lis
     return out
 
 
-def _pick_creative_url(creative: dict, *, allow_thumbnail: bool = True) -> str | None:
-    """Return best direct CDN url. Prefer full image_url over tiny thumbnail."""
+def _fbcdn_variants(url: str) -> list[str]:
+    """Return URL variants from smallest thumbnail to largest plausible CDN size."""
+    if not url.startswith("http"):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def add(u: str):
+        if u and u not in seen:
+            seen.add(u)
+            out.append(u)
+
+    add(url)
+    upgraded = re.sub(
+        r"([/_-])([ps])(\d+)x(\d+)",
+        lambda m: f"{m.group(1)}{m.group(2)}720x720" if max(int(m.group(3)), int(m.group(4))) < 400 else m.group(0),
+        url,
+    )
+    add(upgraded)
+    add(re.sub(r"([/_-])[ps]\d+x\d+", "", url))
+    return out
+
+
+def _collect_creative_urls(creative: dict, *, allow_thumbnail: bool = True) -> list[str]:
+    """Gather every image URL on a creative, best candidates first."""
     if not creative:
-        return None
-    keys = ("image_url", "thumbnail_url") if allow_thumbnail else ("image_url",)
-    for key in keys:
-        url = creative.get(key)
-        if isinstance(url, str) and url.startswith("http"):
-            return url
+        return []
+    urls: list[str] = []
+    seen: set[str] = set()
+
+    def add(val):
+        if isinstance(val, str) and val.startswith("http"):
+            for variant in _fbcdn_variants(val):
+                if variant not in seen:
+                    seen.add(variant)
+                    urls.append(variant)
+
+    for key in ("image_url", "thumbnail_url") if allow_thumbnail else ("image_url",):
+        add(creative.get(key))
     oss = creative.get("object_story_spec") or {}
     for block in (oss.get("link_data"), oss.get("video_data"), oss.get("photo_data")):
         if not isinstance(block, dict):
             continue
         for key in ("picture", "image_url", "url"):
-            url = block.get(key)
-            if isinstance(url, str) and url.startswith("http"):
-                return url
+            add(block.get(key))
     for att in (oss.get("link_data") or {}).get("child_attachments") or []:
         for key in ("picture", "image_url"):
-            url = att.get(key)
-            if isinstance(url, str) and url.startswith("http"):
-                return url
-    return None
+            add(att.get(key))
+    for img in (creative.get("asset_feed_spec") or {}).get("images") or []:
+        add(img.get("url"))
+    return urls
+
+
+def _pick_creative_url(creative: dict, *, allow_thumbnail: bool = True) -> str | None:
+    urls = _collect_creative_urls(creative, allow_thumbnail=allow_thumbnail)
+    return urls[0] if urls else None
 
 
 async def _fetch_bytes(c: httpx.AsyncClient, url: str) -> tuple[bytes, str] | None:
@@ -222,6 +262,40 @@ async def _fetch_bytes(c: httpx.AsyncClient, url: str) -> tuple[bytes, str] | No
     if not ctype.startswith("image/"):
         ctype = "image/jpeg"
     return img.content, ctype
+
+
+async def _best_from_urls(c: httpx.AsyncClient, urls: list[str]) -> tuple[bytes, str] | None:
+    """Download candidates and return the largest image (sharpest for composites)."""
+    best: tuple[bytes, str] | None = None
+    best_len = 0
+    tried: set[str] = set()
+    for url in urls:
+        for variant in _fbcdn_variants(url):
+            if variant in tried:
+                continue
+            tried.add(variant)
+            got = await _fetch_bytes(c, variant)
+            if got and len(got[0]) > best_len:
+                best = got
+                best_len = len(got[0])
+    return best
+
+
+async def _preview_image_urls(c: httpx.AsyncClient, token: str, ad_id: str) -> list[str]:
+    r = await c.get(f"{BASE}/{ad_id}/previews", params={
+        "ad_format": "DESKTOP_FEED_STANDARD",
+        "access_token": token,
+    })
+    if r.status_code != 200:
+        return []
+    urls: list[str] = []
+    for item in r.json().get("data") or []:
+        body = item.get("body") or ""
+        for match in re.findall(r"""src=["']([^"']+)["']""", body):
+            url = match.replace("&amp;", "&")
+            if url.startswith("http"):
+                urls.append(url)
+    return urls
 
 
 async def _full_image_from_hash(c: httpx.AsyncClient, token: str, account_id: str, image_hash: str) -> str | None:
@@ -242,14 +316,11 @@ async def _full_image_from_hash(c: httpx.AsyncClient, token: str, account_id: st
 
 async def ad_image_source(token: str, ad_id: str, account_id: str = "") -> tuple[bytes, str] | None:
     """Fetch highest-res creative image bytes server-side."""
-    fields = "creative{id,image_url,thumbnail_url,image_hash,object_story_spec}"
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as c:
+    fields = "creative{id,image_url,thumbnail_url,image_hash,object_story_spec,asset_feed_spec}"
+    async with httpx.AsyncClient(timeout=45, follow_redirects=True) as c:
         r = await c.get(f"{BASE}/{ad_id}", params={"fields": fields, "access_token": token})
-        if r.status_code != 200:
-            return None
-        creative = r.json().get("creative") or {}
+        creative = r.json().get("creative") or {} if r.status_code == 200 else {}
 
-        # Full-size library image via hash (best quality for single-image ads).
         if account_id and creative.get("image_hash"):
             lib_url = await _full_image_from_hash(c, token, account_id, creative["image_hash"])
             if lib_url:
@@ -257,23 +328,28 @@ async def ad_image_source(token: str, ad_id: str, account_id: str = "") -> tuple
                 if got:
                     return got
 
-        img_url = _pick_creative_url(creative, allow_thumbnail=False)
-        if img_url:
-            got = await _fetch_bytes(c, img_url)
-            if got:
-                return got
+        got = await _best_from_urls(c, _collect_creative_urls(creative, allow_thumbnail=False))
+        if got:
+            return got
 
-        img_url = _pick_creative_url(creative, allow_thumbnail=True)
-        if img_url:
-            return await _fetch_bytes(c, img_url)
+        got = await _best_from_urls(c, _collect_creative_urls(creative, allow_thumbnail=True))
+        if got:
+            return got
+
+        preview_urls = await _preview_image_urls(c, token, ad_id)
+        return await _best_from_urls(c, preview_urls)
     return None
 
 
-async def creative_thumbs(token: str, account_id: str, ad_ids: list[str] | None = None) -> dict:
-    """Map ad_id -> direct CDN url (fallback; prefer /api/ad-image proxy in normalize)."""
+async def fetch_ads_meta(token: str, account_id: str, ad_ids: list[str] | None = None) -> dict[str, dict]:
+    """Per-ad metadata: created time, delivery status, optional thumb fallback."""
     account_id = account_id.replace("act_", "")
-    thumbs: dict[str, str] = {}
-    fields = "id,creative{thumbnail_url,image_url,object_story_spec}"
+    fields = (
+        "id,created_time,effective_status,"
+        "adset{start_time},"
+        "creative{thumbnail_url,image_url,object_story_spec}"
+    )
+    out: dict[str, dict] = {}
     ids = [str(i) for i in (ad_ids or []) if i]
     async with httpx.AsyncClient(timeout=60) as c:
         if ids:
@@ -283,9 +359,13 @@ async def creative_thumbs(token: str, account_id: str, ad_ids: list[str] | None 
                     continue
                 ad = r.json()
                 img = _pick_creative_url(ad.get("creative") or {})
-                if img:
-                    thumbs[ad_id] = img
-            return thumbs
+                out[ad_id] = {
+                    "thumb": img,
+                    "created_time": ad.get("created_time"),
+                    "effective_status": ad.get("effective_status"),
+                    "adset_start": (ad.get("adset") or {}).get("start_time"),
+                }
+            return out
         url = f"{BASE}/act_{account_id}/ads"
         params = {"fields": fields, "limit": 500, "access_token": token}
         while url:
@@ -295,11 +375,21 @@ async def creative_thumbs(token: str, account_id: str, ad_ids: list[str] | None 
             j = r.json()
             for ad in j.get("data", []):
                 img = _pick_creative_url(ad.get("creative") or {})
-                if img:
-                    thumbs[ad["id"]] = img
+                out[ad["id"]] = {
+                    "thumb": img,
+                    "created_time": ad.get("created_time"),
+                    "effective_status": ad.get("effective_status"),
+                    "adset_start": (ad.get("adset") or {}).get("start_time"),
+                }
             url = j.get("paging", {}).get("next")
             params = None
-    return thumbs
+    return out
+
+
+async def creative_thumbs(token: str, account_id: str, ad_ids: list[str] | None = None) -> dict:
+    """Map ad_id -> direct CDN url (fallback; prefer /api/ad-image proxy in normalize)."""
+    meta = await fetch_ads_meta(token, account_id, ad_ids)
+    return {ad_id: info["thumb"] for ad_id, info in meta.items() if info.get("thumb")}
 
 
 def _find_action(arr, types):
@@ -315,7 +405,34 @@ def _find_action(arr, types):
     return 0.0
 
 
-def normalize(rows: list[dict], thumbs: dict, account_id: str = "") -> list[dict]:
+def _parse_meta_time(val: str | None) -> datetime | None:
+    if not val:
+        return None
+    try:
+        return datetime.fromisoformat(val.replace("+0000", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _live_since(info: dict) -> datetime | None:
+    """Best estimate of when this ad started delivering."""
+    created = _parse_meta_time(info.get("created_time"))
+    start = _parse_meta_time(info.get("adset_start"))
+    if created and start:
+        return max(created, start)
+    return created or start
+
+
+def _days_live(since: datetime | None) -> int | None:
+    if not since:
+        return None
+    now = datetime.now(timezone.utc)
+    if since.tzinfo is None:
+        since = since.replace(tzinfo=timezone.utc)
+    return max(0, (now.date() - since.astimezone(timezone.utc).date()).days)
+
+
+def normalize(rows: list[dict], ad_meta: dict, account_id: str = "") -> list[dict]:
     account_id = account_id.replace("act_", "")
     out = []
     for r in rows:
@@ -335,16 +452,22 @@ def normalize(rows: list[dict], thumbs: dict, account_id: str = "") -> list[dict
         elif pvalue > 0:
             roas = pvalue / spend
         thumb = None
+        info = ad_meta.get(ad_id) or {}
         if ad_id and account_id:
             thumb = f"/api/ad-image?account={account_id}&ad={ad_id}"
-        elif ad_id and thumbs.get(ad_id):
-            thumb = thumbs[ad_id]
+        elif ad_id and info.get("thumb"):
+            thumb = info["thumb"]
+        since = _live_since(info)
+        days = _days_live(since)
         out.append({
             "ad_id": ad_id,
             "name": r.get("ad_name") or "Untitled ad",
             "campaign": r.get("campaign_name") or "Unknown campaign",
             "adset": r.get("adset_name") or "",
             "thumb": thumb,
+            "status": info.get("effective_status") or "",
+            "live_since": since.isoformat() if since else None,
+            "days_live": days,
             "spend": spend,
             "impressions": int(float(r.get("impressions", 0) or 0)),
             "clicks": int(float(r.get("clicks", 0) or 0)),
