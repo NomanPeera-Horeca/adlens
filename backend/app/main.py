@@ -13,6 +13,7 @@ The frontend (static SPA) is served from / so the whole thing is one deploy.
 """
 from fastapi import FastAPI, Request, Depends, HTTPException, Query, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 from sqlmodel import Session, select
@@ -76,6 +77,23 @@ async def api_accounts(user: User = Depends(current_user)):
         return {"accounts": await meta.list_ad_accounts(user_token(user))}
     except Exception as e:
         raise HTTPException(502, f"Meta error: {e}")
+
+
+@app.get("/api/ad-image")
+async def api_ad_image(
+    account: str = Query(...),
+    ad: str = Query(...),
+    user: User = Depends(current_user),
+):
+    token = user_token(user)
+    try:
+        result = await meta.ad_image_source(token, ad)
+    except Exception as e:
+        raise HTTPException(502, f"Meta error: {e}")
+    if not result:
+        raise HTTPException(404, "No image for this ad")
+    data, ctype = result
+    return Response(content=data, media_type=ctype, headers={"Cache-Control": "public, max-age=86400"})
 
 
 def _insights_response(payload: dict, effective_range: str, requested_range: str,

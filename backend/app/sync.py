@@ -69,8 +69,9 @@ async def fetch_and_store(
         rows = await meta.insights(token, account_id, date_range)
         catalog = await meta.list_active_campaigns(token, account_id)
         camp_rows = await meta.campaign_insights(token, account_id, date_range)
-        thumbs = await meta.creative_thumbs(token, account_id)
-        ads = scoring.score_all(meta.normalize(rows, thumbs))
+        ad_ids = [r.get("ad_id") for r in rows if r.get("ad_id")]
+        thumbs = await meta.creative_thumbs(token, account_id, ad_ids)
+        ads = scoring.score_all(meta.normalize(rows, thumbs, account_id))
         campaigns = scoring.score_all(meta.merge_active_campaigns(catalog, camp_rows))
         run.ads_json = json.dumps({"ads": ads, "campaigns": campaigns})
         run.status = "success"

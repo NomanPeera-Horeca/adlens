@@ -250,9 +250,20 @@ function renderUserbox(){
 async function loadAccounts(){
   const r=await api("/api/accounts");
   if(r.detail){ alert("Reconnect needed: "+r.detail); return; }
-  const sel=$("#acct"); sel.innerHTML=(r.accounts||[]).map(a=>`<option value="${a.account_id}">${esc(a.name||"Ad account")} (act_${esc(a.account_id)})</option>`).join("");
+  const accounts=r.accounts||[];
+  const sel=$("#acct");
+  sel.innerHTML=accounts.map(a=>{
+    const cur=a.currency||"?";
+    const tz=(a.timezone_name||"").split("/").pop().replace(/_/g," ");
+    const label=`${esc(a.name||"Ad account")} · ${esc(cur)}${tz?" · "+esc(tz):""} (act_${esc(a.account_id)})`;
+    return `<option value="${a.account_id}">${label}</option>`;
+  }).join("");
+  const saved=localStorage.getItem("adlens_account");
+  const usd=accounts.find(a=>a.currency==="USD");
+  if(saved&&accounts.some(a=>String(a.account_id)===saved)) sel.value=saved;
+  else if(usd) sel.value=usd.account_id;
   $("#acctField").style.display=$("#rangeField").style.display="flex"; $("#refresh").style.display="inline-block";
-  if((r.accounts||[]).length) loadInsights();
+  if(accounts.length) loadInsights();
 }
 async function loadInsights(force=false){
   const account=$("#acct").value, range=$("#range").value;
@@ -405,7 +416,8 @@ $("#levelAds").onclick=()=>setLevel("ads");
 $("#campFilter").onchange=e=>{CAMP_FILTER=e.target.value;render();};
 $("#sort").onchange=e=>{SORT=e.target.value;render();};
 $("#search").oninput=e=>{SEARCH=e.target.value;render();};
-$("#acct").onchange=loadInsights; $("#range").onchange=loadInsights;
+$("#acct").onchange=()=>{localStorage.setItem("adlens_account",$("#acct").value);loadInsights();};
+$("#range").onchange=loadInsights;
 boot();
 </script>
 </body>
