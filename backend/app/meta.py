@@ -189,11 +189,12 @@ def merge_active_campaigns(catalog: list[dict], insight_rows: list[dict]) -> lis
     return out
 
 
-def _pick_creative_url(creative: dict) -> str | None:
-    """Return best image URL without modifying signed CDN params."""
+def _pick_creative_url(creative: dict, *, allow_thumbnail: bool = True) -> str | None:
+    """Return best direct CDN url. Prefer full image_url over tiny thumbnail."""
     if not creative:
         return None
-    for key in ("image_url", "thumbnail_url"):
+    keys = ("image_url", "thumbnail_url") if allow_thumbnail else ("image_url",)
+    for key in keys:
         url = creative.get(key)
         if isinstance(url, str) and url.startswith("http"):
             return url
@@ -210,6 +211,61 @@ def _pick_creative_url(creative: dict) -> str | None:
             url = att.get(key)
             if isinstance(url, str) and url.startswith("http"):
                 return url
+    return None
+
+
+async def _fetch_bytes(c: httpx.AsyncClient, url: str) -> tuple[bytes, str] | None:
+    img = await c.get(url)
+    if img.status_code != 200:
+        return None
+    ctype = img.headers.get("content-type") or "image/jpeg"
+    if not ctype.startswith("image/"):
+        ctype = "image/jpeg"
+    return img.content, ctype
+
+
+async def _full_image_from_hash(c: httpx.AsyncClient, token: str, account_id: str, image_hash: str) -> str | None:
+    account_id = account_id.replace("act_", "")
+    r = await c.get(f"{BASE}/act_{account_id}/adimages", params={
+        "hashes": f'["{image_hash}"]',
+        "fields": "url,permalink_url,width,height",
+        "access_token": token,
+    })
+    if r.status_code != 200:
+        return None
+    images = r.json().get("data") or []
+    if not images:
+        return None
+    best = max(images, key=lambda x: int(x.get("width") or 0))
+    return best.get("url") or best.get("permalink_url")
+
+
+async def ad_image_source(token: str, ad_id: str, account_id: str = "") -> tuple[bytes, str] | None:
+    """Fetch highest-res creative image bytes server-side."""
+    fields = "creative{id,image_url,thumbnail_url,image_hash,object_story_spec}"
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as c:
+        r = await c.get(f"{BASE}/{ad_id}", params={"fields": fields, "access_token": token})
+        if r.status_code != 200:
+            return None
+        creative = r.json().get("creative") or {}
+
+        # Full-size library image via hash (best quality for single-image ads).
+        if account_id and creative.get("image_hash"):
+            lib_url = await _full_image_from_hash(c, token, account_id, creative["image_hash"])
+            if lib_url:
+                got = await _fetch_bytes(c, lib_url)
+                if got:
+                    return got
+
+        img_url = _pick_creative_url(creative, allow_thumbnail=False)
+        if img_url:
+            got = await _fetch_bytes(c, img_url)
+            if got:
+                return got
+
+        img_url = _pick_creative_url(creative, allow_thumbnail=True)
+        if img_url:
+            return await _fetch_bytes(c, img_url)
     return None
 
 
@@ -244,27 +300,6 @@ async def creative_thumbs(token: str, account_id: str, ad_ids: list[str] | None 
             url = j.get("paging", {}).get("next")
             params = None
     return thumbs
-
-
-async def ad_image_source(token: str, ad_id: str) -> tuple[bytes, str] | None:
-    """Fetch creative image bytes server-side (avoids CDN hotlink blocks in browser)."""
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as c:
-        r = await c.get(f"{BASE}/{ad_id}", params={
-            "fields": "creative{thumbnail_url,image_url,object_story_spec}",
-            "access_token": token,
-        })
-        if r.status_code != 200:
-            return None
-        img_url = _pick_creative_url(r.json().get("creative") or {})
-        if not img_url:
-            return None
-        img = await c.get(img_url)
-        if img.status_code != 200:
-            return None
-        ctype = img.headers.get("content-type") or "image/jpeg"
-        if not ctype.startswith("image/"):
-            ctype = "image/jpeg"
-        return img.content, ctype
 
 
 def _find_action(arr, types):

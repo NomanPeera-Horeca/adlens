@@ -87,7 +87,7 @@ async def api_ad_image(
 ):
     token = user_token(user)
     try:
-        result = await meta.ad_image_source(token, ad)
+        result = await meta.ad_image_source(token, ad, account_id=account)
     except Exception as e:
         raise HTTPException(502, f"Meta error: {e}")
     if not result:

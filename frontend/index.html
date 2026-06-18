@@ -58,7 +58,7 @@
   .card.v-scale{border-left-color:var(--green)}.card.v-watch{border-left-color:var(--amber)}
   .card.v-kill{border-left-color:var(--red)}.card.v-data{border-left-color:#c2c9d4}
   .thumb{aspect-ratio:1/1;background:var(--slate-bg);display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative}
-  .thumb img{width:100%;height:100%;object-fit:cover}
+  .thumb img{width:100%;height:100%;object-fit:cover;cursor:zoom-in;image-rendering:auto}
   .thumb .ph{color:var(--faint);font-size:11px;font-weight:600}
   .badge{position:absolute;top:10px;right:10px;font-size:10.5px;font-weight:800;letter-spacing:.5px;padding:5px 9px;border-radius:20px;text-transform:uppercase;color:#fff}
   .badge.scale{background:var(--green)}.badge.watch{background:var(--amber)}.badge.kill{background:var(--red)}.badge.data{background:#8b95a5}
@@ -74,7 +74,15 @@
   th:first-child,td:first-child{text-align:left}
   th{font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700;cursor:pointer;background:#fafbfc;position:sticky;top:0}
   td.creative{display:flex;align-items:center;gap:10px;text-align:left}
-  td.creative img,.mini{width:38px;height:38px;border-radius:7px;object-fit:cover;background:var(--slate-bg);flex-shrink:0}
+  td.creative img,.mini{width:48px;height:48px;border-radius:7px;object-fit:cover;background:var(--slate-bg);flex-shrink:0;cursor:zoom-in}
+  .mini.empty-thumb{background:var(--slate-bg)}
+  .lightbox{display:none;position:fixed;inset:0;z-index:9999;align-items:center;justify-content:center;padding:24px}
+  .lightbox.open{display:flex}
+  .lightbox-bg{position:absolute;inset:0;background:rgba(15,27,45,.88)}
+  .lightbox-frame{position:relative;max-width:min(960px,95vw);max-height:90vh;margin:0;z-index:1}
+  .lightbox-frame img{display:block;max-width:min(960px,95vw);max-height:82vh;width:auto;height:auto;object-fit:contain;border-radius:10px;box-shadow:0 20px 60px rgba(0,0,0,.45)}
+  .lightbox-frame figcaption{color:#fff;text-align:center;font-size:13px;margin-top:10px;opacity:.9}
+  .lightbox-close{position:absolute;top:-12px;right:-12px;width:36px;height:36px;border:none;border-radius:50%;background:#fff;color:var(--ink);font-size:22px;line-height:1;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.25)}
   .vbadge{display:inline-block;font-size:10px;font-weight:800;letter-spacing:.4px;padding:3px 8px;border-radius:20px;text-transform:uppercase}
   .vbadge.scale{background:var(--green-bg);color:#0f7a37}.vbadge.watch{background:var(--amber-bg);color:#8a5a0c}
   .vbadge.kill{background:var(--red-bg);color:#a8132a}.vbadge.data{background:var(--slate-bg);color:#586073}
@@ -160,6 +168,15 @@
       </div>
     </div>
   </div>
+</div>
+
+<div id="lightbox" class="lightbox" aria-hidden="true">
+  <div class="lightbox-bg" id="lightboxBg"></div>
+  <figure class="lightbox-frame">
+    <button type="button" class="lightbox-close" id="lightboxClose" aria-label="Close">×</button>
+    <img id="lightboxImg" alt="" />
+    <figcaption id="lightboxCap"></figcaption>
+  </figure>
 </div>
 
 <script>
@@ -325,6 +342,28 @@ function render(){
   if(LEVEL==="campaigns") out.innerHTML=VIEW==="cards"?`<div class="grid">${list.map(campaignCardHTML).join("")}</div>`:campaignTableHTML(list);
   else out.innerHTML=VIEW==="cards"?`<div class="grid">${list.map(cardHTML).join("")}</div>`:tableHTML(list);
 }
+function adThumbHTML(a, mini=false){
+  if(!a.thumb) return mini?`<div class="mini empty-thumb"></div>`:`<div class="ph">No preview</div>`;
+  const cap=esc(a.name||"Ad preview");
+  const cls=mini?"mini zoomable":"zoomable";
+  return `<img class="${cls}" src="${a.thumb}" data-caption="${cap}" alt="${cap}" loading="lazy" title="Click to enlarge" onerror="this.outerHTML='${mini?`<div class=mini empty-thumb></div>`:`<div class=ph>No preview</div>`}'">`;
+}
+function openLightbox(src,caption){
+  const lb=$("#lightbox");
+  $("#lightboxImg").src=src;
+  $("#lightboxCap").textContent=caption||"";
+  lb.classList.add("open");
+  lb.setAttribute("aria-hidden","false");
+  document.body.style.overflow="hidden";
+}
+function closeLightbox(){
+  const lb=$("#lightbox");
+  lb.classList.remove("open");
+  lb.setAttribute("aria-hidden","true");
+  $("#lightboxImg").src="";
+  $("#lightboxCap").textContent="";
+  document.body.style.overflow="";
+}
 function campaignCardHTML(c){
   const v=c.verdict, ctrCls=c.ctr>=4?"hot":(c.ctr<1.5&&c.spend>0?"cold":"");
   const live=c.status==="ACTIVE"?"status-live":"status-live none";
@@ -354,7 +393,7 @@ function campaignTableHTML(list){
   return `<div class="tablewrap"><table><thead><tr>${th}</tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 function cardHTML(a){
-  const v=a.verdict, t=a.thumb?`<img src="${a.thumb}" loading="lazy" onerror="this.outerHTML='<div class=ph>No preview</div>'">`:`<div class="ph">No preview</div>`;
+  const v=a.verdict, t=adThumbHTML(a,false);
   const ctrCls=a.ctr>=4?"hot":(a.ctr<1.5?"cold":"");
   return `<div class="card v-${v.key}"><div class="thumb">${t}<span class="badge ${v.key}">${v.label}</span></div>
    <div class="card-body">   <div class="c-name" title="${esc(a.name)}">${esc(a.name)}</div>
@@ -372,7 +411,7 @@ function cardHTML(a){
 function tableHTML(list){
   const cols=[["name","Creative"],["campaign","Campaign"],["score","Verdict"],["spend","Spend"],["roas","ROAS"],["pvalue","Purch. value"],["ctr","CTR"],["cpc","CPC"],["cpm","CPM"],["purchases","Purchases"]];
   const th=cols.map(c=>`<th data-col="${c[0]}">${c[1]}</th>`).join("");
-  const rows=list.map(a=>{const v=a.verdict,m=a.thumb?`<img src="${a.thumb}" onerror="this.outerHTML='<div class=mini></div>'">`:`<div class="mini"></div>`;
+  const rows=list.map(a=>{const v=a.verdict,m=adThumbHTML(a,true);
     return `<tr><td class="creative">${m}<span>${esc(trunc(a.name,40))}</span></td>
     <td style="text-align:left">${esc(trunc(a.campaign||"",36))}</td>
     <td style="text-align:left"><span class="vbadge ${v.key}">${v.label}</span></td>
@@ -405,6 +444,9 @@ document.addEventListener("click",e=>{
   if(e.target.id==="connect") location.href="/auth/facebook/login";
   if(e.target.id==="demo") demoData();
   if(e.target.id==="refresh") loadInsights(true);
+  if(e.target.id==="lightboxClose"||e.target.id==="lightboxBg"){ closeLightbox(); return; }
+  const zoom=e.target.closest(".zoomable");
+  if(zoom){ e.stopPropagation(); openLightbox(zoom.src, zoom.dataset.caption||zoom.alt); return; }
   const campCard=e.target.closest("[data-campaign]"); if(campCard&&LEVEL==="campaigns") drillIntoCampaign(campCard.dataset.campaign);
   const p=e.target.closest(".pill"); if(p){FILTER=p.dataset.f;document.querySelectorAll(".pill").forEach(x=>x.classList.remove("on"));p.classList.add("on");render();}
   const th=e.target.closest("th[data-col]"); if(th){SORT=th.dataset.col==="name"?"spend":th.dataset.col;$("#sort").value=["score","spend","roas","ctr","cpc","cpm"].includes(SORT)?SORT:"spend";render();}
@@ -418,6 +460,7 @@ $("#sort").onchange=e=>{SORT=e.target.value;render();};
 $("#search").oninput=e=>{SEARCH=e.target.value;render();};
 $("#acct").onchange=()=>{localStorage.setItem("adlens_account",$("#acct").value);loadInsights();};
 $("#range").onchange=loadInsights;
+document.addEventListener("keydown",e=>{ if(e.key==="Escape") closeLightbox(); });
 boot();
 </script>
 </body>
