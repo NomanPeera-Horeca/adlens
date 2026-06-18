@@ -253,9 +253,24 @@ def healthz():
 # ----------------------------- Serve frontend -----------------------------
 # Keep this LAST so it doesn't shadow /api routes.
 import os
-# Prefer frontend copied into backend/ on Render (see render.yaml buildCommand).
-_frontend = os.path.join(os.path.dirname(__file__), "..", "frontend")
-if not os.path.isdir(_frontend):
-    _frontend = os.path.join(os.path.dirname(__file__), "..", "..", "frontend")
-if os.path.isdir(_frontend):
+
+
+def _frontend_dir() -> str | None:
+    here = os.path.dirname(__file__)
+    for rel in ("../frontend", "../../frontend"):
+        path = os.path.abspath(os.path.join(here, rel))
+        if os.path.isfile(os.path.join(path, "index.html")):
+            return path
+    return None
+
+
+_frontend = _frontend_dir()
+if _frontend:
     app.mount("/", StaticFiles(directory=_frontend, html=True), name="frontend")
+else:
+    @app.get("/")
+    def missing_frontend():
+        raise HTTPException(
+            503,
+            "Dashboard files missing on server. Redeploy with frontend bundled in backend/frontend/.",
+        )

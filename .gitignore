@@ -7,5 +7,6 @@ __pycache__/
 .DS_Store
 *.egg-info/
 .pytest_cache/
-backend/frontend/*
+.backend/frontend/*
+!backend/frontend/index.html
 !backend/frontend/.gitkeep
