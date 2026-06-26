@@ -1,10 +1,13 @@
 """
 Creative scoring with explicit actions.
 
-Call-heavy accounts: weigh cost/call, call volume, CTR, and spend together.
+Call-heavy accounts: weigh cost/call, call volume, CTR, spend, and product category.
+High-ticket categories (walk-in) compare to category peers — weak CTR triggers
+creative refresh, not automatic kill.
 """
 from statistics import mean
 
+from .categories import categorize
 
 DEFAULT_RULES = {
     "target_roas": 2.0,
@@ -44,24 +47,76 @@ def _pack(key: str, label: str, score: float, action: str, reasons: list[str]) -
     return {"key": key, "label": label, "score": score, "action": action, "reasons": reasons}
 
 
+def _category_context(ads: list[dict], rules: dict) -> dict[str, dict]:
+    judged = [a for a in ads if a["spend"] >= rules["min_spend"]]
+    by_cat: dict[str, list[dict]] = {}
+    for a in judged:
+        key = (a.get("category") or {}).get("key") or "general"
+        by_cat.setdefault(key, []).append(a)
+
+    out: dict[str, dict] = {}
+    for key, peers in by_cat.items():
+        if len(peers) < 2:
+            continue
+        out[key] = {
+            "avg_cpcall": _avg_cpa(peers, "calls"),
+            "avg_ctr": mean([a["ctr"] for a in peers if a.get("ctr")]),
+            "avg_calls": _avg_calls(peers),
+            "count": len(peers),
+        }
+    return out
+
+
+def _resolve_call_benchmark(ad: dict, ctx: dict) -> tuple[float, float, float, str]:
+    """Return avg cost/call, avg CTR, avg calls, benchmark source label."""
+    cat = ad.get("category") or {}
+    cat_key = cat.get("key") or "general"
+    cat_ctx = (ctx.get("by_category") or {}).get(cat_key)
+    mult = float(cat.get("cpa_multiplier") or 1.0)
+
+    avg_cpcall = ctx["avg_cpcall"]
+    avg_ctr = ctx["avg_ctr"]
+    avg_calls = ctx["avg_calls"]
+    source = "account"
+
+    if cat_ctx:
+        if cat_ctx.get("avg_cpcall"):
+            avg_cpcall = cat_ctx["avg_cpcall"]
+        if cat_ctx.get("avg_ctr"):
+            avg_ctr = cat_ctx["avg_ctr"]
+        if cat_ctx.get("avg_calls"):
+            avg_calls = cat_ctx["avg_calls"]
+        source = f"{cat.get('label', cat_key)} peers"
+
+    # High-ticket lines tolerate higher $/call even vs category peers.
+    if mult > 1.0 and avg_cpcall:
+        avg_cpcall = avg_cpcall * mult
+
+    return avg_cpcall, avg_ctr, avg_calls, source
+
+
 def _verdict_calls(ad: dict, ctx: dict, rules: dict) -> dict:
     calls = int(ad.get("calls") or 0)
     spend = ad["spend"]
     ctr = float(ad.get("ctr") or 0)
     cpcall = ad.get("cost_per_call") or (round(spend / calls, 2) if calls else None)
-    avg_cpcall = ctx["avg_cpcall"]
-    avg_ctr = ctx["avg_ctr"]
-    avg_calls = ctx["avg_calls"]
+    cat = ad.get("category") or {}
+    high_ticket = bool(cat.get("high_ticket"))
+    avg_cpcall, avg_ctr, avg_calls, bench = _resolve_call_benchmark(ad, ctx)
     reasons: list[str] = []
     score = 0.0
 
+    if cat.get("label"):
+        reasons.append(f"{cat['label']} · ~${cat.get('ticket_usd', 0):,} ticket")
+
     if calls == 0:
         if spend >= rules["kill_spend"]:
-            return _pack(
-                "kill", "Kill", -200,
-                "Pause this ad and move budget to creatives that are generating calls.",
-                [f"${spend:,.0f} spent with zero calls in this period"],
+            action = (
+                "Pause this ad and reallocate budget — no calls recorded in this period."
+                if not high_ticket
+                else "No calls yet at meaningful spend. Refresh creative and audience before pausing the walk-in line."
             )
+            return _pack("kill", "Kill", -200, action, [f"${spend:,.0f} spent with zero calls in this period"])
         return _pack(
             "data", "Need data", 0,
             "Wait for more spend or extend the date range before changing this ad.",
@@ -71,19 +126,22 @@ def _verdict_calls(ad: dict, ctx: dict, rules: dict) -> dict:
     cpa_ratio = (cpcall / avg_cpcall) if avg_cpcall and cpcall else 1.0
     if cpa_ratio <= 0.75:
         score += 130
-        reasons.append(f"${cpcall:.2f}/call — well below account avg (${avg_cpcall:.2f})")
+        reasons.append(f"${cpcall:.2f}/call — well below {bench} avg (${avg_cpcall:.2f})")
     elif cpa_ratio <= 0.95:
         score += 90
-        reasons.append(f"${cpcall:.2f}/call — below account average")
+        reasons.append(f"${cpcall:.2f}/call — below {bench} average")
     elif cpa_ratio <= 1.1:
         score += 45
-        reasons.append(f"${cpcall:.2f}/call — near account average")
+        reasons.append(f"${cpcall:.2f}/call — near {bench} average")
     elif cpa_ratio <= 1.4:
         score -= 25
-        reasons.append(f"${cpcall:.2f}/call — above average; trim budget")
+        reasons.append(f"${cpcall:.2f}/call — above average; trim budget or refresh creative")
+    elif cpa_ratio <= 2.0 and high_ticket:
+        score -= 15
+        reasons.append(f"${cpcall:.2f}/call — high for {bench}, but expected for high-ticket")
     else:
         score -= 90
-        reasons.append(f"${cpcall:.2f}/call — {cpa_ratio:.1f}× account avg — too expensive")
+        reasons.append(f"${cpcall:.2f}/call — {cpa_ratio:.1f}× {bench} avg — too expensive")
 
     if avg_calls > 0:
         if calls >= avg_calls * 1.25:
@@ -98,6 +156,7 @@ def _verdict_calls(ad: dict, ctx: dict, rules: dict) -> dict:
     else:
         reasons.append(f"{calls} calls recorded")
 
+    ctr_weak = False
     if avg_ctr > 0:
         ctr_r = ctr / avg_ctr
         if ctr_r >= 1.15:
@@ -105,13 +164,30 @@ def _verdict_calls(ad: dict, ctx: dict, rules: dict) -> dict:
             reasons.append(f"CTR {ctr:.2f}% — above average engagement")
         elif ctr_r <= 0.75:
             score -= 20
-            reasons.append(f"CTR {ctr:.2f}% — weak; refresh hook or image")
+            ctr_weak = True
+            reasons.append(f"CTR {ctr:.2f}% — weak; test new hook or image")
         else:
             reasons.append(f"CTR {ctr:.2f}% — average engagement")
 
     if spend >= 500 and cpa_ratio > 1.25:
         score -= 30
         reasons.append(f"High spend (${spend:,.0f}) with expensive calls")
+
+    # High-ticket with calls: prefer creative refresh over hard kill.
+    if high_ticket and calls > 0 and (ctr_weak or cpa_ratio > 1.1):
+        if score <= 20:
+            return _pack(
+                "watch", "Refresh", score,
+                "Keep the walk-in campaign running but replace underperforming images/headlines. "
+                "High-ticket products naturally have lower CTR — focus on better creative, not pausing the line.",
+                reasons,
+            )
+        if score < 110:
+            return _pack(
+                "watch", "Watch", score,
+                "Hold budget. Test 2–3 new creative variants aimed at commercial buyers, then compare $/call.",
+                reasons,
+            )
 
     if score >= 110:
         return _pack(
@@ -205,6 +281,7 @@ def build_context(ads: list[dict], rules: dict) -> dict:
         "avg_cpl": _avg_cpa(pool, "leads"),
         "avg_cpcall": _avg_cpa(pool, "calls"),
         "avg_calls": _avg_calls(pool),
+        "by_category": _category_context(ads, rules),
     }
 
 
@@ -226,10 +303,82 @@ def verdict(ad: dict, ctx: dict, rules: dict) -> dict:
     return _verdict_engagement(ad, ctx, rules)
 
 
+def _score_one_asset(asset: dict, siblings: list[dict], ad: dict) -> dict:
+    """Rank creatives within one ad — identify which image to remove."""
+    spend = float(asset.get("spend") or 0)
+    calls = int(asset.get("calls") or 0)
+    ctr = float(asset.get("ctr") or 0)
+    cpcall = asset.get("cost_per_call")
+    reasons: list[str] = []
+
+    if spend < 5:
+        return _pack(
+            "data", "Need data", 0,
+            "Not enough spend on this creative yet.",
+            [f"${spend:.0f} spent"],
+        )
+
+    sibling_calls = [s for s in siblings if (s.get("calls") or 0) > 0 and s is not asset]
+    best_cpcall = min((s.get("cost_per_call") or 999999 for s in sibling_calls), default=None)
+    best_ctr = max((s.get("ctr") or 0 for s in siblings if s is not asset), default=0)
+    score = 0.0
+
+    if calls == 0 and spend >= 30:
+        return _pack(
+            "kill", "Remove", -100,
+            "Turn off this image in Ads Manager — it spent without generating calls.",
+            [f"${spend:.0f} spend · 0 calls · CTR {ctr:.2f}%"],
+        )
+
+    if cpcall and best_cpcall and best_cpcall < 999999:
+        ratio = cpcall / best_cpcall
+        if ratio <= 0.85:
+            score += 80
+            reasons.append(f"${cpcall:.2f}/call — best or near-best in this ad")
+        elif ratio <= 1.15:
+            score += 30
+            reasons.append(f"${cpcall:.2f}/call — similar to other creatives")
+        else:
+            score -= 60
+            reasons.append(f"${cpcall:.2f}/call — {ratio:.1f}× worse than best creative in ad")
+
+    if best_ctr > 0:
+        if ctr >= best_ctr * 1.05:
+            score += 25
+            reasons.append(f"CTR {ctr:.2f}% — top engagement in this ad")
+        elif ctr <= best_ctr * 0.7:
+            score -= 25
+            reasons.append(f"CTR {ctr:.2f}% — weakest hook in this ad")
+
+    reasons.insert(0, f"{calls} calls · ${spend:.0f} spend")
+
+    if score >= 70:
+        return _pack("scale", "Keep", score, "Best-performing creative in this ad — leave it running.", reasons)
+    if score <= -20:
+        return _pack("kill", "Remove", score, "Remove or pause this image in Meta — shift rotation to better creatives.", reasons)
+    return _pack("watch", "Watch", score, "Mixed signals — give it more spend or replace if another creative wins.", reasons)
+
+
+def score_assets(ad: dict) -> list[dict]:
+    assets = ad.get("assets") or []
+    if not assets:
+        return []
+    scored = []
+    for asset in assets:
+        v = _score_one_asset(asset, assets, ad)
+        scored.append({**asset, "verdict": v})
+    scored.sort(key=lambda x: (-(x.get("verdict") or {}).get("score", 0), -(x.get("spend") or 0)))
+    return scored
+
+
 def score_all(ads: list[dict], rules: dict | None = None) -> list[dict]:
     rules = {**DEFAULT_RULES, **(rules or {})}
+    for a in ads:
+        a["category"] = categorize(a.get("name") or "", a.get("campaign") or "")
     ctx = build_context(ads, rules)
     for a in ads:
         a["verdict"] = verdict(a, ctx, rules)
         a["scoring_mode"] = ctx["mode"]
+        if a.get("assets"):
+            a["assets"] = score_assets(a)
     return ads

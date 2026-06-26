@@ -92,6 +92,23 @@
   .action-box p{margin:0 0 6px;font-size:12px;line-height:1.45;color:var(--text)}
   .action-reasons{margin:0;padding-left:16px;font-size:11px;color:var(--muted);line-height:1.4}
   .action-reasons li{margin:2px 0}
+  .cat-badge{display:inline-block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:3px 7px;border-radius:6px;background:#eef1f6;color:#4a5568;margin-bottom:2px}
+  .assets-box{border:1px solid var(--line);border-radius:10px;background:#fafbfc;overflow:hidden}
+  .assets-head{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;background:#f3f5f8;border-bottom:1px solid var(--line);font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.45px;color:var(--muted)}
+  .assets-toggle{background:transparent;border:none;font-size:11px;font-weight:700;color:var(--ink);padding:2px 4px}
+  .assets-list{padding:6px;display:flex;flex-direction:column;gap:6px}
+  .asset-row{display:grid;grid-template-columns:44px 1fr auto;gap:8px;align-items:center;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:#fff}
+  .asset-row img,.asset-row .asset-ph{width:44px;height:44px;border-radius:6px;object-fit:cover;background:var(--slate-bg)}
+  .asset-ph{display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--faint);font-weight:700}
+  .asset-meta{font-size:11px;line-height:1.35}
+  .asset-meta .asset-name{font-weight:700;color:var(--text);margin-bottom:2px}
+  .asset-metrics{font-size:10px;color:var(--muted)}
+  .asset-verdict{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.35px;padding:4px 7px;border-radius:6px;white-space:nowrap}
+  .asset-verdict.scale{color:var(--green);background:var(--green-bg)}
+  .asset-verdict.watch{color:#7a5410;background:var(--amber-bg)}
+  .asset-verdict.kill{color:var(--red);background:var(--red-bg)}
+  .asset-verdict.data{color:var(--muted);background:#eef1f6}
+  .asset-action{font-size:10px;color:var(--muted);margin-top:3px;line-height:1.3}
   .rows{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px}
   .row{display:flex;justify-content:space-between;font-size:12px}.row .l{color:var(--muted)}.row .vv{font-weight:700}
   .hot{color:var(--green)}.cold{color:var(--red)}
@@ -312,10 +329,41 @@ function metricGridHTML(a,rows){
 }
 function scoringNote(rows){
   const mode=rows.find(a=>a.scoring_mode)?.scoring_mode;
-  if(mode==="calls") return "Scale / Watch / Kill use <b>cost per call</b>, <b>call volume</b>, <b>CTR</b>, and <b>spend</b>. Each card shows what to do.";
+  if(mode==="calls") return "Verdicts use <b>cost per call</b>, <b>call volume</b>, <b>CTR</b>, and <b>product category</b> (walk-in vs fridge). Expand a card to compare creatives inside each ad.";
   if(mode==="leads") return "Verdicts use <b>cost per lead</b> and lead volume from Meta.";
   if(mode==="roas") return "Verdicts use <b>ROAS / purchases</b> from Meta.";
   return "No calls or leads from Meta in this period — add call tracking, then Refresh.";
+}
+function categoryBadgeHTML(a){
+  const c=a.category; if(!c||!c.label||c.key==="general") return "";
+  return `<span class="cat-badge" title="~$${(c.ticket_usd||0).toLocaleString()} avg ticket">${esc(c.label)}</span>`;
+}
+function assetThumbHTML(asset){
+  if(asset.thumb) return `<img src="${esc(asset.thumb)}" alt="" loading="lazy" onerror="this.outerHTML='<div class=asset-ph>IMG</div>'">`;
+  return `<div class="asset-ph">${esc((asset.asset_type||"img").slice(0,3).toUpperCase())}</div>`;
+}
+function assetsHTML(a){
+  const assets=(a.assets||[]).filter(x=>(x.spend||0)>0);
+  if(!assets.length) return "";
+  const multi=assets.length>1;
+  const id=`assets-${esc(a.ad_id||a.name).replace(/[^a-z0-9]/gi,"")}`;
+  const rows=assets.map(asset=>{
+    const v=asset.verdict||{};
+    const cpcall=asset.cost_per_call?usd(asset.cost_per_call):"—";
+    return `<div class="asset-row">
+      ${assetThumbHTML(asset)}
+      <div class="asset-meta">
+        <div class="asset-name">${esc(trunc(asset.name||asset.asset_id||"Creative",28))}</div>
+        <div class="asset-metrics">${asset.calls||0} calls · ${cpcall} · CTR ${pct(asset.ctr||0)} · ${usd(asset.spend||0)}</div>
+        ${v.action?`<div class="asset-action">${esc(trunc(v.action,90))}</div>`:""}
+      </div>
+      <span class="asset-verdict ${esc(v.key||"data")}">${esc(v.label||"—")}</span>
+    </div>`;
+  }).join("");
+  return `<div class="assets-box">
+    <div class="assets-head"><span>Creatives in this ad (${assets.length})</span>${multi?`<button type="button" class="assets-toggle" data-toggle="${id}">Hide</button>`:""}</div>
+    <div class="assets-list" id="${id}">${rows}</div>
+  </div>`;
 }
 
 let ADS=[],CAMPAIGNS=[],LEVEL=sessionStorage.getItem("adlens_level")||"campaigns",VIEW="cards",SORT="spend",FILTER="all",SEARCH="",CAMP_FILTER="",ME=null,SYNCED_AT=null,CACHED=false,STALE_ERROR="",CAMPAIGN_COUNT=0,RANGE_LIMITED=false;
@@ -627,10 +675,12 @@ function cardHTML(a){
    <div class="thumb">${t}${deliveryThumbBadge(a)}${ageBadge}<span class="badge ${v.key}">${v.label}</span></div>
    <div class="card-body">
    <div class="card-head"><div class="c-name" title="${esc(a.name)}">${esc(a.name)}</div></div>
+   ${categoryBadgeHTML(a)}
    <div class="c-meta">${esc(trunc(a.campaign||"",52))}</div>
    <div class="meta-line">${delivery}${ageShort?` · ${esc(ageShort)} old`:""}</div>
    ${metricGridHTML(a,rows)}
    ${extra}
+   ${assetsHTML(a)}
    ${actionHTML(v)}
    </div></div>`;
 }
@@ -677,6 +727,10 @@ document.addEventListener("click",e=>{
   const campCard=e.target.closest("[data-campaign]"); if(campCard&&LEVEL==="campaigns") drillIntoCampaign(campCard.dataset.campaign);
   const p=e.target.closest(".pill"); if(p){FILTER=p.dataset.f;document.querySelectorAll(".pill").forEach(x=>x.classList.remove("on"));p.classList.add("on");render();}
   const th=e.target.closest("th[data-col]"); if(th){SORT=th.dataset.col==="name"?"spend":th.dataset.col;$("#sort").value=["score","spend","days_live","calls","leads","cost_per_call","cost_per_lead","roas","ctr","cpc","cpm"].includes(SORT)?SORT:"spend";render();}
+  const tg=e.target.closest(".assets-toggle"); if(tg){
+    const list=document.getElementById(tg.dataset.toggle);
+    if(list){ const hide=list.style.display!=="none"; list.style.display=hide?"none":""; tg.textContent=hide?"Show":"Hide"; }
+  }
 });
 $("#viewCards").onclick=()=>{VIEW="cards";$("#viewCards").classList.add("on");$("#viewTable").classList.remove("on");render();};
 $("#viewTable").onclick=()=>{VIEW="table";$("#viewTable").classList.add("on");$("#viewCards").classList.remove("on");render();};

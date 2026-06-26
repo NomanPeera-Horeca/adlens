@@ -167,6 +167,32 @@ async def insights(token: str, account_id: str, date_query: dict | None = None) 
     return out
 
 
+async def asset_insights(
+    token: str,
+    account_id: str,
+    date_query: dict | None = None,
+    *,
+    breakdown: str = "image_asset",
+) -> list[dict]:
+    """Per-creative metrics for dynamic / multi-asset ads (Meta asset breakdown)."""
+    account_id = account_id.replace("act_", "")
+    date_query = date_query or {"date_preset": "last_30d"}
+    fields = "ad_id,ad_name,campaign_name,spend,impressions,clicks,actions"
+    url = f"{BASE}/act_{account_id}/insights"
+    params = {
+        "level": "ad",
+        "breakdowns": breakdown,
+        "fields": fields,
+        "limit": 500,
+        "access_token": token,
+    }
+    params.update(insights_params(date_query))
+    try:
+        return await _paginate(token, url, params)
+    except httpx.HTTPStatusError:
+        return []
+
+
 async def _paginate(token: str, url: str, params: dict) -> list[dict]:
     out = []
     async with httpx.AsyncClient(timeout=60) as c:
@@ -727,6 +753,86 @@ def _days_live(since: datetime | None) -> int | None:
     if since.tzinfo is None:
         since = since.replace(tzinfo=timezone.utc)
     return max(0, (now.date() - since.astimezone(timezone.utc).date()).days)
+
+
+def _asset_key(row: dict, breakdown: str) -> str | None:
+    block = row.get(breakdown) or {}
+    if isinstance(block, dict):
+        for key in ("hash", "id", "video_id"):
+            val = block.get(key)
+            if val:
+                return str(val)
+    return None
+
+
+def _asset_thumb(row: dict, breakdown: str) -> str | None:
+    block = row.get(breakdown) or {}
+    if not isinstance(block, dict):
+        return None
+    for key in ("url", "thumbnail_url", "permalink_url"):
+        val = block.get(key)
+        if isinstance(val, str) and val.startswith("http"):
+            return val
+    return None
+
+
+def _normalize_asset_row(row: dict, breakdown: str) -> dict | None:
+    spend = float(row.get("spend", 0) or 0)
+    if spend <= 0:
+        return None
+    asset_id = _asset_key(row, breakdown)
+    if not asset_id:
+        return None
+    impressions = int(float(row.get("impressions", 0) or 0))
+    clicks = int(float(row.get("clicks", 0) or 0))
+    ctr = round(clicks / impressions * 100, 2) if impressions > 0 else 0.0
+    conv = _conversion_fields(row)
+    return {
+        "asset_id": asset_id,
+        "asset_type": breakdown.replace("_asset", ""),
+        "name": (row.get(breakdown) or {}).get("name") or asset_id[:12],
+        "thumb": _asset_thumb(row, breakdown),
+        "spend": spend,
+        "impressions": impressions,
+        "clicks": clicks,
+        "ctr": ctr,
+        "cpc": round(spend / clicks, 2) if clicks > 0 else None,
+        **conv,
+    }
+
+
+def group_asset_insights(rows: list[dict]) -> dict[str, list[dict]]:
+    """Group Meta asset breakdown rows by ad_id."""
+    by_ad: dict[str, list[dict]] = {}
+    for row in rows:
+        ad_id = row.get("ad_id")
+        if not ad_id:
+            continue
+        breakdown = "image_asset" if row.get("image_asset") else "video_asset" if row.get("video_asset") else None
+        if not breakdown:
+            continue
+        asset = _normalize_asset_row(row, breakdown)
+        if not asset:
+            continue
+        by_ad.setdefault(str(ad_id), []).append(asset)
+    for ad_id, assets in by_ad.items():
+        by_ad[ad_id] = sorted(assets, key=lambda x: (-x["spend"], -x.get("calls", 0)))
+    return by_ad
+
+
+def attach_assets(ads: list[dict], asset_rows: list[dict]) -> list[dict]:
+    by_ad = group_asset_insights(asset_rows)
+    for ad in ads:
+        ad_id = str(ad.get("ad_id") or "")
+        ad["assets"] = by_ad.get(ad_id, [])
+    return ads
+
+
+async def fetch_asset_insights(token: str, account_id: str, date_query: dict | None = None) -> list[dict]:
+    """Image + video asset breakdowns merged (best-effort — some ads only support one)."""
+    image_rows = await asset_insights(token, account_id, date_query, breakdown="image_asset")
+    video_rows = await asset_insights(token, account_id, date_query, breakdown="video_asset")
+    return image_rows + video_rows
 
 
 def normalize(rows: list[dict], ad_meta: dict, account_id: str = "") -> list[dict]:

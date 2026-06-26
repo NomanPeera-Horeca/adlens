@@ -68,11 +68,14 @@ async def fetch_and_store(
 
     try:
         rows = await meta.insights(token, account_id, date_query)
+        asset_rows = await meta.fetch_asset_insights(token, account_id, date_query)
         catalog = await meta.list_active_campaigns(token, account_id)
         camp_rows = await meta.campaign_insights(token, account_id, date_query)
         ad_ids = [r.get("ad_id") for r in rows if r.get("ad_id")]
         ad_meta = await meta.fetch_ads_meta(token, account_id, ad_ids)
-        ads = scoring.score_all(meta.normalize(rows, ad_meta, account_id))
+        ads = meta.normalize(rows, ad_meta, account_id)
+        ads = meta.attach_assets(ads, asset_rows)
+        ads = scoring.score_all(ads)
         campaigns = scoring.score_all(meta.merge_active_campaigns(catalog, camp_rows))
         run.ads_json = json.dumps({"ads": ads, "campaigns": campaigns})
         run.status = "success"
