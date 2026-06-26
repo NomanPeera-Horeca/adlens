@@ -165,7 +165,9 @@
       <option value="">All campaigns</option>
     </select>
     <select id="sort">
-      <option value="spend">Sort: Spend</option><option value="days_live">Sort: Days live</option><option value="score">Sort: Verdict</option>
+      <option value="spend">Sort: Spend</option><option value="calls">Sort: Calls</option><option value="leads">Sort: Leads</option>
+      <option value="cost_per_call">Sort: Cost / call</option><option value="cost_per_lead">Sort: Cost / lead</option>
+      <option value="days_live">Sort: Days live</option><option value="score">Sort: Verdict</option>
       <option value="roas">Sort: ROAS</option><option value="ctr">Sort: CTR</option>
       <option value="cpc">Sort: CPC</option><option value="cpm">Sort: CPM</option>
     </select>
@@ -244,6 +246,35 @@ function deliveryTableCell(a){
   const when=fmtLiveDate(a.status_updated);
   const tip=esc(a.status_label||"Paused");
   return `<span class="status-live none" title="${tip}">${when?`Paused · ${when}`:"Paused"}</span>`;
+}
+function hasAnyConv(rows){
+  return rows.some(a=>(a.purchases||0)>0||(a.pvalue||0)>0||(a.calls||0)>0||(a.leads||0)>0||(a.contacts||0)>0);
+}
+function totConv(rows,key){ return rows.reduce((s,a)=>s+(a[key]||0),0); }
+function avgCpa(rows,key){
+  const spent=rows.filter(a=>(a[key]||0)>0).reduce((s,a)=>s+a.spend,0);
+  const cnt=totConv(rows,key);
+  return cnt>0?spent/cnt:null;
+}
+function convCardRows(a){
+  const rows=[];
+  if(a.calls) rows.push(["Calls",num(a.calls),a.cost_per_call?usd(a.cost_per_call)+"/call":""]);
+  if(a.leads) rows.push(["Leads",num(a.leads),a.cost_per_lead?usd(a.cost_per_lead)+"/lead":""]);
+  if(a.contacts) rows.push(["Contacts",num(a.contacts),a.cost_per_contact?usd(a.cost_per_contact)+"/ct":""]);
+  if(a.landing_views) rows.push(["Landing views",num(a.landing_views),a.cost_per_lpv?usd(a.cost_per_lpv)+"/view":""]);
+  if(a.purchases) rows.push(["Purchases",num(a.purchases),a.roas!=null?a.roas.toFixed(2)+"x ROAS":""]);
+  if(a.messages) rows.push(["Messages",num(a.messages),""]);
+  if(a.registrations) rows.push(["Sign-ups",num(a.registrations),""]);
+  return rows;
+}
+function scoringNote(rows){
+  const mode=rows.find(a=>a.scoring_mode)?.scoring_mode;
+  if(mode==="calls") return "Verdicts use <b>cost per call</b> from Meta.";
+  if(mode==="leads") return "Verdicts use <b>cost per lead</b> from Meta.";
+  if(mode==="roas") return "Verdicts use <b>ROAS / purchases</b> from Meta.";
+  if(mode==="contacts") return "Verdicts use <b>cost per contact</b> from Meta.";
+  if(hasAnyConv(rows)) return "Verdicts use Meta conversion data where available.";
+  return "No calls, leads, or purchases in this period from Meta — verdicts use <b>CTR vs CPC</b>. Set up call/lead tracking in Meta to score on real outcomes.";
 }
 
 let ADS=[],CAMPAIGNS=[],LEVEL=sessionStorage.getItem("adlens_level")||"campaigns",VIEW="cards",SORT="spend",FILTER="all",SEARCH="",CAMP_FILTER="",ME=null,SYNCED_AT=null,CACHED=false,STALE_ERROR="",CAMPAIGN_COUNT=0,RANGE_LIMITED=false;
@@ -434,7 +465,8 @@ async function loadInsights(force=false){
 
 function render(){
   const rows=currentRows();
-  const hasConv=rows.some(a=>(a.purchases||0)>0||(a.pvalue||0)>0);
+  const hasPurch=rows.some(a=>(a.purchases||0)>0||(a.pvalue||0)>0);
+  const totalCalls=totConv(rows,"calls"), totalLeads=totConv(rows,"leads");
   const note=$("#trackingNotice");
   if(RANGE_LIMITED){
     note.style.display="block"; note.classList.remove("err");
@@ -442,9 +474,9 @@ function render(){
   } else if(STALE_ERROR){
     note.style.display="block";
     note.innerHTML=`<b>Using cached data</b> — Meta sync failed (${esc(STALE_ERROR)}). Showing last good pull from ${fmtSync(SYNCED_AT)}.`;
-  } else if(rows.length&&!hasConv&&LEVEL==="ads"){
-    note.style.display="block";
-    note.innerHTML="<b>Heads up:</b> Meta is returning no purchase/ROAS data — conversion tracking (pixel or Conversions API) isn't reporting sales. Verdicts use <b>engagement efficiency</b> (CTR vs CPC) until that's fixed, then switch to ROAS automatically.";
+  } else if(rows.length){
+    note.style.display="block"; note.classList.remove("err");
+    note.innerHTML=`<b>Meta results:</b> ${scoringNote(rows)}`;
   } else if(LEVEL==="campaigns"&&CAMPAIGNS.length){
     note.style.display="block"; note.classList.remove("err");
     note.innerHTML=`<b>${CAMPAIGNS.length} campaigns</b> · Click a campaign to see its ads, or switch to <b>Ad / creative level</b>.`;
@@ -454,10 +486,19 @@ function render(){
   const imp=rows.reduce((s,a)=>s+(a.impressions||0),0),clk=rows.reduce((s,a)=>s+(a.clicks||0),0);
   const wins=rows.filter(a=>a.verdict.key==="scale").length,kills=rows.filter(a=>a.verdict.key==="kill").length;
   const subLabel=LEVEL==="campaigns"?`${CAMPAIGN_COUNT} campaigns · ${ADS.length} ads`:`${CAMP_FILTER?esc(trunc(CAMP_FILTER,24))+" · ":""}${ADS.length} ads`;
+  let kpi2=["Purchase value",pv>0?usd0(pv):"—",hasPurch?"from Meta":""];
+  let kpi3=["Blended ROAS",hasPurch?(tot>0?(pv/tot).toFixed(2):"0")+"x":"—",hasPurch?"from Meta":""];
+  if(totalCalls>0){
+    kpi2=["Phone calls",num(totalCalls),"from Meta"];
+    kpi3=["Avg cost / call",avgCpa(rows,"calls")?usd(avgCpa(rows,"calls")):"—","lower is better"];
+  } else if(totalLeads>0){
+    kpi2=["Leads",num(totalLeads),"from Meta"];
+    kpi3=["Avg cost / lead",avgCpa(rows,"leads")?usd(avgCpa(rows,"leads")):"—","lower is better"];
+  }
   $("#kpis").innerHTML=!rows.length&&!CAMPAIGNS.length&&!ADS.length?"":[
     ["Total spend",usd0(tot),subLabel],
-    ["Purchase value",pv>0?usd0(pv):"—",hasConv?"":"tracking off"],
-    ["Blended ROAS",hasConv?(tot>0?(pv/tot).toFixed(2):"0")+"x":"—",hasConv?"":"no sales data"],
+    kpi2,
+    kpi3,
     ["Avg CTR",pct(imp>0?clk/imp*100:0),num(clk)+" clicks"],
     ["🟢 Scaling",wins,LEVEL==="campaigns"?"strong campaigns":"strong creatives"],
     ["🔴 Killing",kills,"draining budget"]
@@ -471,6 +512,13 @@ function render(){
   list.sort((x,y)=>{
     if(SORT==="score") return y.verdict.score-x.verdict.score;
     if(SORT==="days_live") return (y.days_live??-1)-(x.days_live??-1);
+    if(SORT==="cost_per_call"||SORT==="cost_per_lead"){
+      const ax=x[SORT], ay=y[SORT];
+      if(ax==null&&ay==null) return 0;
+      if(ax==null) return 1;
+      if(ay==null) return -1;
+      return ax-ay;
+    }
     return (y[SORT]||0)-(x[SORT]||0);
   });
   const out=$("#output");
@@ -505,28 +553,28 @@ function closeLightbox(){
 function campaignCardHTML(c){
   const v=c.verdict, ctrCls=c.ctr>=4?"hot":(c.ctr<1.5&&c.spend>0?"cold":"");
   const live=c.status==="ACTIVE"?"status-live":"status-live none";
+  const conv=convCardRows(c).map(r=>`<div class="row"><span class="l">${r[0]}</span><span class="vv num">${r[1]}${r[2]?` <span style="color:var(--faint);font-weight:600">${r[2]}</span>`:""}</span></div>`).join("");
   return `<div class="card camp-card v-${v.key}" data-campaign="${esc(c.name)}" title="Click to view ads in this campaign"><div class="card-body">
    <div class="camp-head"><div class="c-name" title="${esc(c.name)}">${esc(c.name)}</div><span class="${live}">${esc(c.status||"—")}</span></div>
    <div class="c-meta num">${num(c.impressions)} impr · ${num(c.clicks)} clicks · ${usd(c.spend)} spend</div>
    <div style="margin:8px 0"><span class="vbadge ${v.key}">${v.label}</span></div>
    <div class="rows">
-     <div class="row"><span class="l">ROAS</span><span class="vv num">${c.roas!=null?c.roas.toFixed(2)+"x":"—"}</span></div>
+     ${conv||`<div class="row"><span class="l">Results</span><span class="vv num">—</span></div>`}
      <div class="row"><span class="l">CTR</span><span class="vv num ${ctrCls}">${c.spend>0?pct(c.ctr):"—"}</span></div>
      <div class="row"><span class="l">CPC</span><span class="vv num">${c.spend>0?usd(c.cpc):"—"}</span></div>
-     <div class="row"><span class="l">CPM</span><span class="vv num">${c.spend>0?usd(c.cpm):"—"}</span></div>
-     <div class="row"><span class="l">Purch.</span><span class="vv num">${c.purchases?num(c.purchases):"—"}</span></div>
+     <div class="row"><span class="l">ROAS</span><span class="vv num">${c.roas!=null?c.roas.toFixed(2)+"x":"—"}</span></div>
    </div></div></div>`;
 }
 function campaignTableHTML(list){
-  const cols=[["name","Campaign"],["status","Status"],["score","Verdict"],["spend","Spend"],["roas","ROAS"],["pvalue","Purch. value"],["ctr","CTR"],["cpc","CPC"],["impressions","Impr."],["purchases","Purchases"]];
+  const cols=[["name","Campaign"],["status","Status"],["calls","Calls"],["leads","Leads"],["cost_per_call","$/Call"],["cost_per_lead","$/Lead"],["score","Verdict"],["spend","Spend"],["ctr","CTR"],["purchases","Purch."]];
   const th=cols.map(c=>`<th data-col="${c[0]}">${c[1]}</th>`).join("");
   const rows=list.map(c=>{const v=c.verdict;
     return `<tr class="camp-row" data-campaign="${esc(c.name)}" style="cursor:pointer" title="Click to view ads in this campaign"><td style="text-align:left;font-weight:600">${esc(trunc(c.name,44))}</td>
     <td style="text-align:left"><span class="status-live ${c.status==="ACTIVE"?"":"none"}">${esc(c.status||"—")}</span></td>
+    <td class="num">${c.calls?num(c.calls):"—"}</td><td class="num">${c.leads?num(c.leads):"—"}</td>
+    <td class="num">${c.cost_per_call?usd(c.cost_per_call):"—"}</td><td class="num">${c.cost_per_lead?usd(c.cost_per_lead):"—"}</td>
     <td style="text-align:left"><span class="vbadge ${v.key}">${v.label}</span></td>
-    <td class="num">${usd(c.spend)}</td><td class="num">${c.roas!=null?c.roas.toFixed(2)+"x":"—"}</td>
-    <td class="num">${c.pvalue?usd(c.pvalue):"—"}</td><td class="num ${c.ctr>=4?"good":""}">${c.spend>0?pct(c.ctr):"—"}</td>
-    <td class="num">${c.spend>0?usd(c.cpc):"—"}</td><td class="num">${num(c.impressions)}</td>
+    <td class="num">${usd(c.spend)}</td><td class="num ${c.ctr>=4?"good":""}">${c.spend>0?pct(c.ctr):"—"}</td>
     <td class="num">${c.purchases?num(c.purchases):"—"}</td></tr>`;}).join("");
   return `<div class="tablewrap"><table><thead><tr>${th}</tr></thead><tbody>${rows}</tbody></table></div>`;
 }
@@ -535,6 +583,7 @@ function cardHTML(a){
   const ctrCls=a.ctr>=4?"hot":(a.ctr<1.5?"cold":"");
   const age=liveLabel(a), ageShort=liveLabel(a,true);
   const ageBadge=ageShort?`<span class="live-badge" title="${esc(age)}">${esc(ageShort)}</span>`:"";
+  const conv=convCardRows(a).map(r=>`<div class="row"><span class="l">${r[0]}</span><span class="vv num">${r[1]}${r[2]?` <span style="color:var(--faint);font-weight:600">${r[2]}</span>`:""}</span></div>`).join("");
   return `<div class="card v-${v.key}"><div class="thumb">${t}${deliveryThumbBadge(a)}${ageBadge}<span class="badge ${v.key}">${v.label}</span></div>
    <div class="card-body">   <div class="c-name" title="${esc(a.name)}">${esc(a.name)}</div>
    <div class="c-meta">${esc(trunc(a.campaign||"",48))}</div>
@@ -542,26 +591,24 @@ function cardHTML(a){
    ${age?`<div class="live-meta">${esc(age)}</div>`:""}
    <div class="c-meta num">${num(a.impressions)} impr · ${num(a.clicks)} clicks</div>
    <div class="rows">
+     ${conv||`<div class="row"><span class="l">Results</span><span class="vv num">—</span></div>`}
      <div class="row"><span class="l">Spend</span><span class="vv num">${usd(a.spend)}</span></div>
-     <div class="row"><span class="l">ROAS</span><span class="vv num">${a.roas!=null?a.roas.toFixed(2)+"x":"—"}</span></div>
      <div class="row"><span class="l">CTR</span><span class="vv num ${ctrCls}">${pct(a.ctr)}</span></div>
      <div class="row"><span class="l">CPC</span><span class="vv num">${usd(a.cpc)}</span></div>
-     <div class="row"><span class="l">CPM</span><span class="vv num">${usd(a.cpm)}</span></div>
-     <div class="row"><span class="l">Purch.</span><span class="vv num">${a.purchases?num(a.purchases):"—"}</span></div>
    </div></div></div>`;
 }
 function tableHTML(list){
-  const cols=[["name","Creative"],["campaign","Campaign"],["status","Delivery"],["days_live","Age"],["score","Verdict"],["spend","Spend"],["roas","ROAS"],["pvalue","Purch. value"],["ctr","CTR"],["cpc","CPC"],["cpm","CPM"],["purchases","Purchases"]];
+  const cols=[["name","Creative"],["campaign","Campaign"],["status","Delivery"],["calls","Calls"],["leads","Leads"],["cost_per_call","$/Call"],["cost_per_lead","$/Lead"],["score","Verdict"],["spend","Spend"],["ctr","CTR"],["purchases","Purch."]];
   const th=cols.map(c=>`<th data-col="${c[0]}">${c[1]}</th>`).join("");
-  const rows=list.map(a=>{const v=a.verdict,m=adThumbHTML(a,true), age=liveLabel(a);
+  const rows=list.map(a=>{const v=a.verdict,m=adThumbHTML(a,true);
     return `<tr><td class="creative">${m}<span>${esc(trunc(a.name,40))}</span></td>
     <td style="text-align:left">${esc(trunc(a.campaign||"",36))}</td>
     <td class="num" style="text-align:left;white-space:nowrap">${deliveryTableCell(a)}</td>
-    <td class="num" style="text-align:left;white-space:nowrap" title="${esc(age)}">${esc(age)}</td>
+    <td class="num">${a.calls?num(a.calls):"—"}</td><td class="num">${a.leads?num(a.leads):"—"}</td>
+    <td class="num">${a.cost_per_call?usd(a.cost_per_call):"—"}</td><td class="num">${a.cost_per_lead?usd(a.cost_per_lead):"—"}</td>
     <td style="text-align:left"><span class="vbadge ${v.key}">${v.label}</span></td>
-    <td class="num">${usd(a.spend)}</td><td class="num">${a.roas!=null?a.roas.toFixed(2)+"x":"—"}</td>
-    <td class="num">${a.pvalue?usd(a.pvalue):"—"}</td><td class="num ${a.ctr>=4?"good":""}">${pct(a.ctr)}</td>
-    <td class="num">${usd(a.cpc)}</td><td class="num">${usd(a.cpm)}</td><td class="num">${a.purchases?num(a.purchases):"—"}</td></tr>`;}).join("");
+    <td class="num">${usd(a.spend)}</td><td class="num ${a.ctr>=4?"good":""}">${pct(a.ctr)}</td>
+    <td class="num">${a.purchases?num(a.purchases):"—"}</td></tr>`;}).join("");
   return `<div class="tablewrap"><table><thead><tr>${th}</tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
@@ -571,7 +618,7 @@ function demoData(){
   ["walkinref1011 — Walk-in coolers",201.28,2.36,0.38,8.88,22600],["Test - restaurantsetup1403",412.24,2.4,0.97,23.19,18000],
   ["New Engagement Ad — bulk order",409.33,3.91,0.66,25.97,16000],["New Engagement Ad — ranges",177.46,1.76,0.85,14.91,11900],
   ["restaurantsetup1403 — design",143.13,1.63,1.51,24.63,5800],["Restaurant Startup Package",71.20,1.38,1.62,22.25,3200]];
-  ADS=s.map((r,i)=>({name:r[0],thumb:null,spend:r[1],ctr:r[2],cpc:r[3],cpm:r[4],impressions:r[5],clicks:Math.round(r[5]*r[2]/100),purchases:0,pvalue:0,roas:null,days_live:14+i*3,live_since:new Date(Date.now()-(14+i*3)*864e5).toISOString(),is_delivering:i%3!==1,status:i%3!==1?"ACTIVE":"PAUSED",status_label:i%3!==1?"Live":"Paused",status_updated:i%3===1?new Date(Date.now()-5*864e5).toISOString():null}));
+  ADS=s.map((r,i)=>({name:r[0],thumb:null,spend:r[1],ctr:r[2],cpc:r[3],cpm:r[4],impressions:r[5],clicks:Math.round(r[5]*r[2]/100),purchases:0,pvalue:0,roas:null,calls:i%4===0?3:0,leads:i%3===0?2:0,cost_per_call:i%4===0?r[1]/3:null,cost_per_lead:i%3===0?r[1]/2:null,contacts:0,landing_views:0,messages:0,registrations:0,days_live:14+i*3,live_since:new Date(Date.now()-(14+i*3)*864e5).toISOString(),is_delivering:i%3!==1,status:i%3!==1?"ACTIVE":"PAUSED",status_label:i%3!==1?"Live":"Paused",status_updated:i%3===1?new Date(Date.now()-5*864e5).toISOString():null,scoring_mode:i%4===0?"calls":"engagement"}));
   scoreLocally(); $("#splash")&&$("#splash").remove(); render();
 }
 // mirror of backend scoring so the demo works with no server data
@@ -593,7 +640,7 @@ document.addEventListener("click",e=>{
   if(zoom){ e.stopPropagation(); openLightbox(zoom.src, zoom.dataset.caption||zoom.alt); return; }
   const campCard=e.target.closest("[data-campaign]"); if(campCard&&LEVEL==="campaigns") drillIntoCampaign(campCard.dataset.campaign);
   const p=e.target.closest(".pill"); if(p){FILTER=p.dataset.f;document.querySelectorAll(".pill").forEach(x=>x.classList.remove("on"));p.classList.add("on");render();}
-  const th=e.target.closest("th[data-col]"); if(th){SORT=th.dataset.col==="name"?"spend":th.dataset.col;$("#sort").value=["score","spend","days_live","roas","ctr","cpc","cpm"].includes(SORT)?SORT:"spend";render();}
+  const th=e.target.closest("th[data-col]"); if(th){SORT=th.dataset.col==="name"?"spend":th.dataset.col;$("#sort").value=["score","spend","days_live","calls","leads","cost_per_call","cost_per_lead","roas","ctr","cpc","cpm"].includes(SORT)?SORT:"spend";render();}
 });
 $("#viewCards").onclick=()=>{VIEW="cards";$("#viewCards").classList.add("on");$("#viewTable").classList.remove("on");render();};
 $("#viewTable").onclick=()=>{VIEW="table";$("#viewTable").classList.add("on");$("#viewCards").classList.remove("on");render();};

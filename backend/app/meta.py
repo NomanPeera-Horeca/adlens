@@ -15,6 +15,50 @@ from .dates import insights_params
 
 BASE = f"https://graph.facebook.com/{settings.META_API_VERSION}"
 PURCHASE_TYPES = ["omni_purchase", "purchase", "offsite_conversion.fb_pixel_purchase"]
+
+# Meta reports the same outcome under several action_type names — pick the best count per group.
+CONVERSION_GROUPS: dict[str, list[str]] = {
+    "calls": [
+        "click_to_call_native_60s_call_connect",
+        "click_to_call_native_20s_call_connect",
+        "click_to_call_call_confirm",
+        "click_to_call_native_call_placed",
+        "phone_call",
+    ],
+    "leads": [
+        "lead",
+        "onsite_conversion.lead_grouped",
+        "offsite_conversion.fb_pixel_lead",
+        "leadgen_grouped",
+    ],
+    "contacts": [
+        "contact",
+        "contact_total",
+        "onsite_conversion.contact",
+    ],
+    "landing_views": [
+        "landing_page_view",
+        "omni_landing_page_view",
+    ],
+    "link_clicks": ["link_click"],
+    "registrations": [
+        "complete_registration",
+        "offsite_conversion.fb_pixel_complete_registration",
+    ],
+    "add_to_cart": [
+        "add_to_cart",
+        "offsite_conversion.fb_pixel_add_to_cart",
+    ],
+    "checkouts": [
+        "initiate_checkout",
+        "offsite_conversion.fb_pixel_initiate_checkout",
+    ],
+    "messages": [
+        "onsite_conversion.messaging_conversation_started_7d",
+        "onsite_conversion.messaging_first_reply",
+    ],
+}
+RESULT_PRIORITY = ("calls", "leads", "purchases", "contacts", "landing_views", "registrations")
 CREATIVE_FIELDS = "id,image_hash,image_url,thumbnail_url,object_story_spec,asset_feed_spec"
 AD_DETAIL_FIELDS = (
     f"id,created_time,updated_time,effective_status,adset{{start_time}},creative{{{CREATIVE_FIELDS}}}"
@@ -163,10 +207,10 @@ async def campaign_insights(token: str, account_id: str, date_query: dict | None
 def _metrics_from_insight(row: dict | None) -> dict:
     row = row or {}
     spend = float(row.get("spend", 0) or 0)
-    purchases = _find_action(row.get("actions"), PURCHASE_TYPES)
-    pvalue = _find_action(row.get("action_values"), PURCHASE_TYPES)
+    conv = _conversion_fields(row)
     roas = None
     pr = row.get("purchase_roas")
+    pvalue = conv["pvalue"]
     if isinstance(pr, list) and pr:
         try:
             roas = float(pr[0].get("value", 0))
@@ -181,9 +225,8 @@ def _metrics_from_insight(row: dict | None) -> dict:
         "ctr": float(row.get("ctr", 0) or 0),
         "cpc": float(row.get("cpc", 0) or 0),
         "cpm": float(row.get("cpm", 0) or 0),
-        "purchases": purchases,
-        "pvalue": pvalue,
         "roas": roas,
+        **conv,
     }
 
 
@@ -594,17 +637,59 @@ async def creative_thumbs(token: str, account_id: str, ad_ids: list[str] | None 
     return {ad_id: info["thumb"] for ad_id, info in meta.items() if info.get("thumb")}
 
 
-def _find_action(arr, types):
-    if not isinstance(arr, list):
+def _pick_action(actions, types: list[str]) -> float:
+    """Highest count among Meta aliases for one outcome (avoids double-counting)."""
+    if not isinstance(actions, list):
         return 0.0
+    vals: list[float] = []
     for t in types:
-        for x in arr:
+        for x in actions:
             if x.get("action_type") == t:
                 try:
-                    return float(x.get("value", 0))
+                    vals.append(float(x.get("value", 0)))
                 except (TypeError, ValueError):
-                    return 0.0
-    return 0.0
+                    pass
+    return max(vals) if vals else 0.0
+
+
+def _find_action(arr, types):
+    return _pick_action(arr, types)
+
+
+def _cost_per(spend: float, count: float) -> float | None:
+    if spend > 0 and count > 0:
+        return round(spend / count, 2)
+    return None
+
+
+def _conversion_fields(row: dict) -> dict:
+    actions = row.get("actions")
+    out: dict = {}
+    for key, types in CONVERSION_GROUPS.items():
+        out[key] = int(_pick_action(actions, types))
+
+    purchases = int(_pick_action(actions, PURCHASE_TYPES))
+    pvalue = _find_action(row.get("action_values"), PURCHASE_TYPES)
+    spend = float(row.get("spend", 0) or 0)
+
+    out["purchases"] = purchases
+    out["pvalue"] = pvalue
+    out["cost_per_lead"] = _cost_per(spend, out["leads"])
+    out["cost_per_call"] = _cost_per(spend, out["calls"])
+    out["cost_per_contact"] = _cost_per(spend, out["contacts"])
+    out["cost_per_lpv"] = _cost_per(spend, out["landing_views"])
+
+    out["primary_result"] = None
+    out["primary_count"] = 0
+    out["cost_per_result"] = None
+    counts = {"purchases": purchases, **{k: out[k] for k in CONVERSION_GROUPS}}
+    for field in RESULT_PRIORITY:
+        if counts.get(field, 0) > 0:
+            out["primary_result"] = field
+            out["primary_count"] = int(counts[field])
+            out["cost_per_result"] = _cost_per(spend, counts[field])
+            break
+    return out
 
 
 def _parse_meta_time(val: str | None) -> datetime | None:
@@ -652,10 +737,10 @@ def normalize(rows: list[dict], ad_meta: dict, account_id: str = "") -> list[dic
         if spend <= 0:
             continue
         ad_id = r.get("ad_id")
-        purchases = _find_action(r.get("actions"), PURCHASE_TYPES)
-        pvalue = _find_action(r.get("action_values"), PURCHASE_TYPES)
+        conv = _conversion_fields(r)
         roas = None
         pr = r.get("purchase_roas")
+        pvalue = conv["pvalue"]
         if isinstance(pr, list) and pr:
             try:
                 roas = float(pr[0].get("value", 0))
@@ -692,8 +777,7 @@ def normalize(rows: list[dict], ad_meta: dict, account_id: str = "") -> list[dic
             "ctr": float(r.get("ctr", 0) or 0),
             "cpc": float(r.get("cpc", 0) or 0),
             "cpm": float(r.get("cpm", 0) or 0),
-            "purchases": purchases,
-            "pvalue": pvalue,
             "roas": roas,
+            **conv,
         })
     return out
