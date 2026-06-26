@@ -123,7 +123,17 @@
   .c-row-name{font-size:12px;font-weight:700;color:var(--text);line-height:1.25}
   .c-row-stats{font-size:11px;color:var(--muted);line-height:1.4}
   .c-row-insight{font-size:11px;color:#334155;margin-top:5px;line-height:1.4;padding:6px 8px;background:#f8fafc;border-radius:6px;border-left:3px solid #cbd5e1}
+  .c-row-insight.grounded{border-left-color:var(--green);background:#f0fdf4}
   .c-row-insight.ai{border-left-color:#6366f1;background:#f5f3ff}
+  .winners-box{margin:2px 0;padding:10px 12px;border-radius:10px;background:linear-gradient(135deg,#f0fdf4 0%,#ecfdf5 100%);border:1px solid #bbf7d0}
+  .winners-label{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.45px;color:#166534;margin-bottom:8px}
+  .winners-row{display:flex;flex-direction:column;gap:8px}
+  .w-card{display:grid;grid-template-columns:48px 1fr;gap:10px;align-items:center;background:#fff;border:1px solid #bbf7d0;border-radius:8px;padding:8px}
+  .w-card img,.w-card .w-ph{width:48px;height:48px;border-radius:7px;object-fit:cover;background:var(--slate-bg);cursor:zoom-in}
+  .w-ph{display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;color:var(--green)}
+  .w-title{font-size:11.5px;font-weight:700;line-height:1.3;color:var(--text)}
+  .w-stats{font-size:10.5px;color:var(--muted);margin-top:2px}
+  .insight-like{font-size:10.5px;font-weight:700;color:#166534;margin-top:4px}
   .c-row-verdict{font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.35px;padding:5px 8px;border-radius:6px;white-space:nowrap;margin-top:2px}
   .c-row-verdict.scale{color:var(--green);background:var(--green-bg)}
   .c-row-verdict.watch{color:#7a5410;background:var(--amber-bg)}
@@ -372,7 +382,7 @@ function metricGridHTML(a,rows){
 }
 function scoringNote(rows){
   const mode=rows.find(a=>a.scoring_mode)?.scoring_mode;
-  if(mode==="calls") return "Each ad shows its <b>goal</b> (calls vs site visitors), unique creatives only, and AI/heuristic creative notes. Click any thumbnail to enlarge.";
+  if(mode==="calls") return "Recommendations compare each creative to <b>your proven winners</b> in the same category + goal. Refresh builds the winner library over time.";
   if(mode==="leads") return "Verdicts use <b>cost per lead</b> and lead volume from Meta.";
   if(mode==="roas") return "Verdicts use <b>ROAS / purchases</b> from Meta.";
   return "No calls or leads from Meta in this period — add call tracking, then Refresh.";
@@ -392,10 +402,25 @@ function assetStatsLine(asset, ad){
 }
 function insightHTML(asset){
   const ins=asset.insight; if(!ins) return "";
-  const ai=ins.ai?" ai":"";
+  const cls=[ins.ai?" ai":"", ins.grounded?" grounded":""].join("");
   const tip=ins.tip||ins.summary||"";
-  const visual=ins.visual?`<b>${esc(ins.visual)}</b>${ins.hook?` · ${esc(ins.hook)}`:""}`:"";
-  return `<div class="c-row-insight${ai}">${visual?visual+" — ":""}${esc(tip)}</div>`;
+  const visual=ins.visual?`<b>${esc(ins.visual)}</b>`:"";
+  const like=ins.like_winner?`<div class="insight-like">↳ Model after: ${esc(ins.like_winner)}</div>`:"";
+  const diff=ins.diff?` · ${esc(ins.diff)}`:"";
+  return `<div class="c-row-insight${cls}">${visual}${diff?diff:""}${like}<div style="margin-top:4px">${esc(tip)}</div></div>`;
+}
+function peerWinnersHTML(a){
+  const peers=a.peer_winners||[];
+  if(!peers.length) return "";
+  const cat=(a.category||{}).label||"this category";
+  const items=peers.slice(0,2).map(p=>{
+    const cost=p.primary_cost?usd(p.primary_cost):"—";
+    const cap=esc(p.ad_name||p.name||"Winner");
+    const img=p.thumb?`<img class="zoomable" src="${esc(p.thumb)}" data-caption="${cap}" alt="" loading="lazy">`:`<div class="w-ph">★</div>`;
+    const metric=(p.primary_metric||"calls").replace(/_/g," ");
+    return `<div class="w-card">${img}<div><div class="w-title">${esc(trunc(p.ad_name||p.name,32))}</div><div class="w-stats">${p.primary_count||0} ${esc(metric)} · ${cost} · CTR ${pct(p.ctr||0)}</div></div></div>`;
+  }).join("");
+  return `<div class="winners-box"><div class="winners-label">Your proven winners · ${esc(cat)}</div><div class="winners-row">${items}</div></div>`;
 }
 function assetsHTML(a){
   const assets=(a.assets||[]).filter(x=>(x.spend||0)>0);
@@ -758,6 +783,7 @@ function cardHTML(a){
    <div class="meta-line">${delivery}${ageShort?` · ${esc(ageShort)} old`:""}</div>
    ${metricGridHTML(a,rows)}
    ${extra}
+   ${peerWinnersHTML(a)}
    ${actionHTML(v)}
    ${assetsHTML(a)}
    </div></div>`;

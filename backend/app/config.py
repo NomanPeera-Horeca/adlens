@@ -52,7 +52,7 @@ class Settings(BaseSettings):
 
     # --- Optional AI creative vision (OpenAI) ---
     OPENAI_API_KEY: str = ""
-    OPENAI_VISION_MODEL: str = "gpt-4o-mini"
+    OPENAI_VISION_MODEL: str = "gpt-4o"
     AI_VISION_LIMIT: int = 16          # max creatives analyzed per sync refresh
 
     @property

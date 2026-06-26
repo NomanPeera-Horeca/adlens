@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from sqlmodel import Session, select
 
 from . import meta, scoring
-from . import creative_ai
+from . import creative_ai, winners
 from .config import settings
 from .models import SyncRun
 
@@ -77,7 +77,9 @@ async def fetch_and_store(
         ads = meta.normalize(rows, ad_meta, account_id)
         ads = meta.attach_assets(ads, asset_rows)
         ads = scoring.score_all(ads)
+        winners.attach_peer_winners(session, user_id, account_id, ads)
         await creative_ai.enrich_ads_with_insights(ads)
+        winners.record_from_sync(session, user_id, account_id, ads)
         campaigns = scoring.score_all(meta.merge_active_campaigns(catalog, camp_rows))
         run.ads_json = json.dumps({"ads": ads, "campaigns": campaigns})
         run.status = "success"

@@ -1,8 +1,8 @@
 """
-Optional vision analysis for ad creatives.
+Creative analysis grounded in account winners + optional GPT-4o vision.
 
-Set OPENAI_API_KEY in Render to enable AI image review. Without it, AdLens
-still returns a short heuristic insight from metrics + category + goal.
+Set OPENAI_API_KEY in Render for image review. Without it, recommendations
+still compare to your stored winner library from past syncs.
 """
 import json
 import logging
@@ -10,16 +10,22 @@ import logging
 import httpx
 
 from .config import settings
+from .winners import format_peers_for_prompt
 
 log = logging.getLogger(__name__)
 
-_PROMPT = """You review Meta ad creatives for a B2B restaurant/hotel equipment dealer.
+_PROMPT = """You review Meta ad creatives for a B2B restaurant/hotel equipment dealer (The Horeca Store).
+
 Ad goal: {goal}
 Product category: {category}
-Creative performance: {calls} calls, {lpv} landing page views, CTR {ctr}%, spend ${spend}
+THIS creative's performance: {calls} calls, {lpv} landing page views, CTR {ctr}%, spend ${spend}
 
-Look at the image. Return JSON only:
-{{"visual":"what the image shows in ≤12 words","hook":"main message or angle in ≤10 words","fit":"strong|mixed|weak for the stated goal","tip":"one specific action in ≤20 words"}}"""
+YOUR ACCOUNT'S PROVEN WINNERS (same category + goal — real past performance, not generic advice):
+{peers}
+
+Look at THIS image. Compare it to the winners above — layout, product count, CTA, text, format.
+Return JSON only:
+{{"visual":"what this image shows in ≤12 words","hook":"main message in ≤10 words","fit":"strong|mixed|weak for the goal","like_winner":"exact winner ad name to copy OR null","diff":"what this lacks vs winners in ≤25 words","tip":"one specific next step based on winners in ≤25 words"}}"""
 
 
 def heuristic_insight(asset: dict, ad: dict) -> dict:
@@ -30,12 +36,33 @@ def heuristic_insight(asset: dict, ad: dict) -> dict:
     fit = "strong" if vk == "scale" else "weak" if vk == "kill" else "mixed"
     metric = (ad.get("goal") or {}).get("metric") or "calls"
     count = int(asset.get(metric) or 0)
+    peers = ad.get("peer_winners") or []
+
+    tip = (v.get("action") or "Monitor performance")[:120]
+    like_winner = None
+    diff = ""
+
+    if peers and vk in ("kill", "watch", "data"):
+        best = peers[0]
+        pc = best.get("primary_cost")
+        cost_s = f"${pc:.2f}" if pc else "strong cost"
+        like_winner = best.get("ad_name") or best.get("name")
+        diff = best.get("insight_visual") or "proven layout and hook"
+        tip = (
+            f"Model after your winner \"{like_winner}\" "
+            f"({best.get('primary_count', 0)} {best.get('primary_metric', 'results')} at {cost_s}). "
+            f"Match its format: {diff[:60]}."
+        )
+
     return {
         "visual": f"{cat} product shot",
         "hook": asset.get("name") or "Untitled creative",
         "fit": fit,
-        "tip": (v.get("action") or "Monitor performance")[:120],
+        "like_winner": like_winner,
+        "diff": diff,
+        "tip": tip[:200],
         "ai": False,
+        "grounded": bool(peers),
         "summary": f"{fit.title()} for {goal.lower()} · {count} {metric.replace('_', ' ')}",
     }
 
@@ -44,7 +71,7 @@ async def _vision_analyze(image_url: str, prompt: str) -> dict | None:
     if not settings.OPENAI_API_KEY:
         return None
     try:
-        async with httpx.AsyncClient(timeout=25) as c:
+        async with httpx.AsyncClient(timeout=30) as c:
             r = await c.post(
                 "https://api.openai.com/v1/chat/completions",
                 headers={"Authorization": f"Bearer {settings.OPENAI_API_KEY}"},
@@ -57,7 +84,7 @@ async def _vision_analyze(image_url: str, prompt: str) -> dict | None:
                             {"type": "image_url", "image_url": {"url": image_url, "detail": "low"}},
                         ],
                     }],
-                    "max_tokens": 180,
+                    "max_tokens": 260,
                     "response_format": {"type": "json_object"},
                 },
             )
@@ -67,7 +94,11 @@ async def _vision_analyze(image_url: str, prompt: str) -> dict | None:
             text = r.json()["choices"][0]["message"]["content"]
             data = json.loads(text)
             data["ai"] = True
-            data["summary"] = f"{data.get('fit', 'mixed').title()} for goal · {data.get('visual', '')[:40]}"
+            data["grounded"] = True
+            lw = data.get("like_winner")
+            data["summary"] = (
+                f"Like \"{lw}\"" if lw else data.get("fit", "mixed").title()
+            ) + f" · {data.get('visual', '')[:35]}"
             return data
     except Exception as e:
         log.warning("Vision analyze failed: %s", e)
@@ -82,6 +113,7 @@ async def analyze_asset(asset: dict, ad: dict) -> dict:
 
     goal = (ad.get("goal") or {}).get("label") or "Phone calls"
     cat = (ad.get("category") or {}).get("label") or "Commercial equipment"
+    peers = format_peers_for_prompt(ad.get("peer_winners") or [])
     prompt = _PROMPT.format(
         goal=goal,
         category=cat,
@@ -89,6 +121,7 @@ async def analyze_asset(asset: dict, ad: dict) -> dict:
         lpv=int(asset.get("landing_views") or 0),
         ctr=float(asset.get("ctr") or 0),
         spend=float(asset.get("spend") or 0),
+        peers=peers,
     )
     vision = await _vision_analyze(thumb, prompt)
     return vision or base

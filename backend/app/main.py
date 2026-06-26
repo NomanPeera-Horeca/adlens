@@ -21,7 +21,7 @@ from sqlmodel import Session, select
 from .config import settings
 from .db import init_db, get_session
 from .models import User
-from . import meta, crypto, sync
+from . import meta, crypto, sync, winners
 from . import meta_compliance
 from . import admin
 from .dates import FREE_RANGES, PRO_ONLY_RANGES, resolve_date_query
@@ -162,6 +162,7 @@ async def api_insights(
     cached = sync.get_cached(session, user.id, account, effective_key)
     if cached and sync.is_fresh(cached, plan) and not refresh:
         payload = sync.payload_from_run(cached)
+        winners.attach_peer_winners(session, user.id, account, payload["ads"])
         return _insights_response(payload, effective_key, requested_range, True, cached.synced_at,
                                   stale=False, error="", range_limited=range_limited)
 
@@ -171,12 +172,14 @@ async def api_insights(
     except Exception as e:
         if cached and cached.status == "success":
             payload = sync.payload_from_run(cached)
+            winners.attach_peer_winners(session, user.id, account, payload["ads"])
             return _insights_response(payload, effective_key, requested_range, True,
                                       cached.synced_at, stale=True, error=str(e),
                                       range_limited=range_limited)
         raise HTTPException(502, f"Meta error: {e}")
 
     payload = sync.payload_from_run(run)
+    winners.attach_peer_winners(session, user.id, account, payload["ads"])
     return _insights_response(payload, effective_key, requested_range, False, run.synced_at,
                               range_limited=range_limited)
 
