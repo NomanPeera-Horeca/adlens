@@ -55,7 +55,7 @@
 
   .notice{background:var(--amber-bg);border:1px solid #efd9ad;color:#7a5410;border-radius:11px;padding:11px 14px;font-size:13px;margin-bottom:14px;display:none}
   .notice.err{background:var(--red-bg);border-color:#f0c4cb;color:#8a1328}
-  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(248px,1fr));gap:16px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
   .card{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:var(--shadow);border-left:4px solid var(--line);transition:transform .08s}
   .card:hover{transform:translateY(-2px)}
   .card.v-scale{border-left-color:var(--green)}.card.v-watch{border-left-color:var(--amber)}
@@ -73,9 +73,25 @@
   .delivery-meta.off{color:var(--muted)}
   .badge{position:absolute;top:10px;right:10px;font-size:10.5px;font-weight:800;letter-spacing:.5px;padding:5px 9px;border-radius:20px;text-transform:uppercase;color:#fff}
   .badge.scale{background:var(--green)}.badge.watch{background:var(--amber)}.badge.kill{background:var(--red)}.badge.data{background:#8b95a5}
-  .card-body{padding:12px 14px 14px}
-  .c-name{font-size:13px;font-weight:700;line-height:1.3;height:34px;overflow:hidden;margin-bottom:9px}
-  .c-meta{font-size:10.5px;color:var(--faint);margin-bottom:9px;text-transform:uppercase;letter-spacing:.4px;font-weight:600}
+  .card-body{padding:14px 14px 16px;display:flex;flex-direction:column;gap:8px}
+  .c-name{font-size:13px;font-weight:700;line-height:1.35;min-height:36px;margin:0;flex:1}
+  .c-meta{font-size:10px;color:var(--faint);margin:0;text-transform:uppercase;letter-spacing:.35px;font-weight:600}
+  .meta-line{font-size:11px;color:var(--muted);margin:0;line-height:1.35}
+  .card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+  .metric-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:2px 0}
+  .metric-cell{background:#f8f9fb;border:1px solid var(--line);border-radius:10px;padding:9px 10px;min-height:54px;display:flex;flex-direction:column;justify-content:center}
+  .metric-cell .k{font-size:9.5px;text-transform:uppercase;letter-spacing:.45px;color:var(--muted);font-weight:700;margin-bottom:4px}
+  .metric-cell .v{font-size:16px;font-weight:700;line-height:1.15}
+  .metric-cell.good{background:var(--green-bg);border-color:#c8e6d0}.metric-cell.good .v{color:#0f7a37}
+  .metric-cell.warn{background:var(--amber-bg);border-color:#efd9ad}
+  .metric-cell.bad{background:var(--red-bg);border-color:#f0c4cb}.metric-cell.bad .v{color:#a8132a}
+  .action-box{padding:10px 11px;border-radius:10px;background:#f8f9fb;border:1px solid var(--line);border-left:4px solid var(--line)}
+  .card.v-scale .action-box{border-left-color:var(--green)}.card.v-watch .action-box{border-left-color:var(--amber)}
+  .card.v-kill .action-box{border-left-color:var(--red)}.card.v-data .action-box{border-left-color:#c2c9d4}
+  .action-title{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.45px;color:var(--muted);margin-bottom:5px}
+  .action-box p{margin:0 0 6px;font-size:12px;line-height:1.45;color:var(--text)}
+  .action-reasons{margin:0;padding-left:16px;font-size:11px;color:var(--muted);line-height:1.4}
+  .action-reasons li{margin:2px 0}
   .rows{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px}
   .row{display:flex;justify-content:space-between;font-size:12px}.row .l{color:var(--muted)}.row .vv{font-weight:700}
   .hot{color:var(--green)}.cold{color:var(--red)}
@@ -258,23 +274,48 @@ function avgCpa(rows,key){
 }
 function convCardRows(a){
   const rows=[];
-  if(a.calls) rows.push(["Calls",num(a.calls),a.cost_per_call?usd(a.cost_per_call)+"/call":""]);
   if(a.leads) rows.push(["Leads",num(a.leads),a.cost_per_lead?usd(a.cost_per_lead)+"/lead":""]);
-  if(a.contacts) rows.push(["Contacts",num(a.contacts),a.cost_per_contact?usd(a.cost_per_contact)+"/ct":""]);
-  if(a.landing_views) rows.push(["Landing views",num(a.landing_views),a.cost_per_lpv?usd(a.cost_per_lpv)+"/view":""]);
-  if(a.purchases) rows.push(["Purchases",num(a.purchases),a.roas!=null?a.roas.toFixed(2)+"x ROAS":""]);
-  if(a.messages) rows.push(["Messages",num(a.messages),""]);
-  if(a.registrations) rows.push(["Sign-ups",num(a.registrations),""]);
+  if(a.purchases) rows.push(["Purchases",num(a.purchases),a.roas!=null?a.roas.toFixed(2)+"x":""]);
   return rows;
+}
+function metricCell(label,value,tone=""){
+  return `<div class="metric-cell ${tone}"><div class="k">${label}</div><div class="v num">${value}</div></div>`;
+}
+function callCostTone(a,avgCall){
+  if(!a.calls||!a.cost_per_call||!avgCall) return "";
+  if(a.cost_per_call<=avgCall*0.85) return "good";
+  if(a.cost_per_call>=avgCall*1.35) return "bad";
+  if(a.cost_per_call>=avgCall*1.1) return "warn";
+  return "";
+}
+function ctrTone(a,avgCtr){
+  if(!avgCtr) return "";
+  if(a.ctr>=avgCtr*1.15) return "good";
+  if(a.ctr<=avgCtr*0.75) return "bad";
+  return "";
+}
+function actionHTML(v){
+  if(!v||!v.action) return "";
+  const reasons=(v.reasons||[]).slice(0,4).map(r=>`<li>${esc(r)}</li>`).join("");
+  return `<div class="action-box"><div class="action-title">${esc(v.label)} — action</div><p>${esc(v.action)}</p>${reasons?`<ul class="action-reasons">${reasons}</ul>`:""}</div>`;
+}
+function metricGridHTML(a,rows){
+  const avgCall=avgCpa(rows,"calls"), avgCtr=rows.reduce((s,x)=>s+(x.ctr||0),0)/(rows.length||1);
+  const calls=a.calls?num(a.calls):"0";
+  const cpcall=a.cost_per_call?usd(a.cost_per_call):"—";
+  return `<div class="metric-grid">
+    ${metricCell("Calls",calls,a.calls?"":"")}
+    ${metricCell("Cost / call",cpcall,callCostTone(a,avgCall))}
+    ${metricCell("CTR",pct(a.ctr),ctrTone(a,avgCtr))}
+    ${metricCell("Spend",usd(a.spend),"")}
+  </div>`;
 }
 function scoringNote(rows){
   const mode=rows.find(a=>a.scoring_mode)?.scoring_mode;
-  if(mode==="calls") return "Verdicts use <b>cost per call</b> from Meta.";
-  if(mode==="leads") return "Verdicts use <b>cost per lead</b> from Meta.";
+  if(mode==="calls") return "Scale / Watch / Kill use <b>cost per call</b>, <b>call volume</b>, <b>CTR</b>, and <b>spend</b>. Each card shows what to do.";
+  if(mode==="leads") return "Verdicts use <b>cost per lead</b> and lead volume from Meta.";
   if(mode==="roas") return "Verdicts use <b>ROAS / purchases</b> from Meta.";
-  if(mode==="contacts") return "Verdicts use <b>cost per contact</b> from Meta.";
-  if(hasAnyConv(rows)) return "Verdicts use Meta conversion data where available.";
-  return "No calls, leads, or purchases in this period from Meta — verdicts use <b>CTR vs CPC</b>. Set up call/lead tracking in Meta to score on real outcomes.";
+  return "No calls or leads from Meta in this period — add call tracking, then Refresh.";
 }
 
 let ADS=[],CAMPAIGNS=[],LEVEL=sessionStorage.getItem("adlens_level")||"campaigns",VIEW="cards",SORT="spend",FILTER="all",SEARCH="",CAMP_FILTER="",ME=null,SYNCED_AT=null,CACHED=false,STALE_ERROR="",CAMPAIGN_COUNT=0,RANGE_LIMITED=false;
@@ -551,64 +592,59 @@ function closeLightbox(){
   document.body.style.overflow="";
 }
 function campaignCardHTML(c){
-  const v=c.verdict, ctrCls=c.ctr>=4?"hot":(c.ctr<1.5&&c.spend>0?"cold":"");
+  const v=c.verdict, rows=currentRows();
   const live=c.status==="ACTIVE"?"status-live":"status-live none";
-  const conv=convCardRows(c).map(r=>`<div class="row"><span class="l">${r[0]}</span><span class="vv num">${r[1]}${r[2]?` <span style="color:var(--faint);font-weight:600">${r[2]}</span>`:""}</span></div>`).join("");
-  return `<div class="card camp-card v-${v.key}" data-campaign="${esc(c.name)}" title="Click to view ads in this campaign"><div class="card-body">
-   <div class="camp-head"><div class="c-name" title="${esc(c.name)}">${esc(c.name)}</div><span class="${live}">${esc(c.status||"—")}</span></div>
-   <div class="c-meta num">${num(c.impressions)} impr · ${num(c.clicks)} clicks · ${usd(c.spend)} spend</div>
-   <div style="margin:8px 0"><span class="vbadge ${v.key}">${v.label}</span></div>
-   <div class="rows">
-     ${conv||`<div class="row"><span class="l">Results</span><span class="vv num">—</span></div>`}
-     <div class="row"><span class="l">CTR</span><span class="vv num ${ctrCls}">${c.spend>0?pct(c.ctr):"—"}</span></div>
-     <div class="row"><span class="l">CPC</span><span class="vv num">${c.spend>0?usd(c.cpc):"—"}</span></div>
-     <div class="row"><span class="l">ROAS</span><span class="vv num">${c.roas!=null?c.roas.toFixed(2)+"x":"—"}</span></div>
-   </div></div></div>`;
+  const extra=convCardRows(c).map(r=>`<div class="meta-line">${r[0]}: <b>${r[1]}</b>${r[2]?` · ${r[2]}`:""}</div>`).join("");
+  return `<div class="card camp-card v-${v.key}" data-campaign="${esc(c.name)}" title="Click to view ads in this campaign">
+   <div class="card-body">
+   <div class="card-head"><div class="c-name" title="${esc(c.name)}">${esc(c.name)}</div><span class="vbadge ${v.key}">${v.label}</span></div>
+   <div class="c-meta"><span class="${live}">${esc(c.status||"—")}</span> · ${num(c.impressions)} impr</div>
+   ${metricGridHTML(c,rows)}
+   ${extra}
+   ${actionHTML(v)}
+   </div></div>`;
 }
 function campaignTableHTML(list){
-  const cols=[["name","Campaign"],["status","Status"],["calls","Calls"],["leads","Leads"],["cost_per_call","$/Call"],["cost_per_lead","$/Lead"],["score","Verdict"],["spend","Spend"],["ctr","CTR"],["purchases","Purch."]];
+  const cols=[["name","Campaign"],["calls","Calls"],["cost_per_call","$/Call"],["ctr","CTR"],["spend","Spend"],["score","Verdict"],["action","Action"]];
   const th=cols.map(c=>`<th data-col="${c[0]}">${c[1]}</th>`).join("");
   const rows=list.map(c=>{const v=c.verdict;
     return `<tr class="camp-row" data-campaign="${esc(c.name)}" style="cursor:pointer" title="Click to view ads in this campaign"><td style="text-align:left;font-weight:600">${esc(trunc(c.name,44))}</td>
-    <td style="text-align:left"><span class="status-live ${c.status==="ACTIVE"?"":"none"}">${esc(c.status||"—")}</span></td>
-    <td class="num">${c.calls?num(c.calls):"—"}</td><td class="num">${c.leads?num(c.leads):"—"}</td>
-    <td class="num">${c.cost_per_call?usd(c.cost_per_call):"—"}</td><td class="num">${c.cost_per_lead?usd(c.cost_per_lead):"—"}</td>
+    <td class="num">${c.calls!=null?num(c.calls):"0"}</td>
+    <td class="num">${c.cost_per_call?usd(c.cost_per_call):"—"}</td>
+    <td class="num ${c.ctr>=4?"good":""}">${c.spend>0?pct(c.ctr):"—"}</td>
+    <td class="num">${usd(c.spend)}</td>
     <td style="text-align:left"><span class="vbadge ${v.key}">${v.label}</span></td>
-    <td class="num">${usd(c.spend)}</td><td class="num ${c.ctr>=4?"good":""}">${c.spend>0?pct(c.ctr):"—"}</td>
-    <td class="num">${c.purchases?num(c.purchases):"—"}</td></tr>`;}).join("");
+    <td style="text-align:left;white-space:normal;min-width:220px;font-size:12px">${esc(v.action||"")}</td></tr>`;}).join("");
   return `<div class="tablewrap"><table><thead><tr>${th}</tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 function cardHTML(a){
-  const v=a.verdict, t=adThumbHTML(a,false);
-  const ctrCls=a.ctr>=4?"hot":(a.ctr<1.5?"cold":"");
-  const age=liveLabel(a), ageShort=liveLabel(a,true);
-  const ageBadge=ageShort?`<span class="live-badge" title="${esc(age)}">${esc(ageShort)}</span>`:"";
-  const conv=convCardRows(a).map(r=>`<div class="row"><span class="l">${r[0]}</span><span class="vv num">${r[1]}${r[2]?` <span style="color:var(--faint);font-weight:600">${r[2]}</span>`:""}</span></div>`).join("");
-  return `<div class="card v-${v.key}"><div class="thumb">${t}${deliveryThumbBadge(a)}${ageBadge}<span class="badge ${v.key}">${v.label}</span></div>
-   <div class="card-body">   <div class="c-name" title="${esc(a.name)}">${esc(a.name)}</div>
-   <div class="c-meta">${esc(trunc(a.campaign||"",48))}</div>
-   ${deliveryMetaLine(a)}
-   ${age?`<div class="live-meta">${esc(age)}</div>`:""}
-   <div class="c-meta num">${num(a.impressions)} impr · ${num(a.clicks)} clicks</div>
-   <div class="rows">
-     ${conv||`<div class="row"><span class="l">Results</span><span class="vv num">—</span></div>`}
-     <div class="row"><span class="l">Spend</span><span class="vv num">${usd(a.spend)}</span></div>
-     <div class="row"><span class="l">CTR</span><span class="vv num ${ctrCls}">${pct(a.ctr)}</span></div>
-     <div class="row"><span class="l">CPC</span><span class="vv num">${usd(a.cpc)}</span></div>
-   </div></div></div>`;
+  const v=a.verdict, t=adThumbHTML(a,false), rows=currentRows();
+  const ageShort=liveLabel(a,true);
+  const ageBadge=ageShort?`<span class="live-badge" title="${esc(liveLabel(a))}">${esc(ageShort)}</span>`:"";
+  const extra=convCardRows(a).map(r=>`<div class="meta-line">${r[0]}: <b>${r[1]}</b>${r[2]?` · ${r[2]}`:""}</div>`).join("");
+  const delivery=isAdDelivering(a)?`<span style="color:var(--green)">● Live</span>`:(fmtLiveDate(a.status_updated)?`Paused · ${fmtLiveDate(a.status_updated)}`:"Paused");
+  return `<div class="card v-${v.key}">
+   <div class="thumb">${t}${deliveryThumbBadge(a)}${ageBadge}<span class="badge ${v.key}">${v.label}</span></div>
+   <div class="card-body">
+   <div class="card-head"><div class="c-name" title="${esc(a.name)}">${esc(a.name)}</div></div>
+   <div class="c-meta">${esc(trunc(a.campaign||"",52))}</div>
+   <div class="meta-line">${delivery}${ageShort?` · ${esc(ageShort)} old`:""}</div>
+   ${metricGridHTML(a,rows)}
+   ${extra}
+   ${actionHTML(v)}
+   </div></div>`;
 }
 function tableHTML(list){
-  const cols=[["name","Creative"],["campaign","Campaign"],["status","Delivery"],["calls","Calls"],["leads","Leads"],["cost_per_call","$/Call"],["cost_per_lead","$/Lead"],["score","Verdict"],["spend","Spend"],["ctr","CTR"],["purchases","Purch."]];
+  const cols=[["name","Creative"],["calls","Calls"],["cost_per_call","$/Call"],["ctr","CTR"],["spend","Spend"],["score","Verdict"],["action","Action"]];
   const th=cols.map(c=>`<th data-col="${c[0]}">${c[1]}</th>`).join("");
   const rows=list.map(a=>{const v=a.verdict,m=adThumbHTML(a,true);
-    return `<tr><td class="creative">${m}<span>${esc(trunc(a.name,40))}</span></td>
-    <td style="text-align:left">${esc(trunc(a.campaign||"",36))}</td>
-    <td class="num" style="text-align:left;white-space:nowrap">${deliveryTableCell(a)}</td>
-    <td class="num">${a.calls?num(a.calls):"—"}</td><td class="num">${a.leads?num(a.leads):"—"}</td>
-    <td class="num">${a.cost_per_call?usd(a.cost_per_call):"—"}</td><td class="num">${a.cost_per_lead?usd(a.cost_per_lead):"—"}</td>
+    return `<tr><td class="creative">${m}<span>${esc(trunc(a.name,36))}</span></td>
+    <td class="num">${a.calls!=null?num(a.calls):"0"}</td>
+    <td class="num">${a.cost_per_call?usd(a.cost_per_call):"—"}</td>
+    <td class="num ${a.ctr>=4?"good":""}">${pct(a.ctr)}</td>
+    <td class="num">${usd(a.spend)}</td>
     <td style="text-align:left"><span class="vbadge ${v.key}">${v.label}</span></td>
-    <td class="num">${usd(a.spend)}</td><td class="num ${a.ctr>=4?"good":""}">${pct(a.ctr)}</td>
-    <td class="num">${a.purchases?num(a.purchases):"—"}</td></tr>`;}).join("");
+    <td style="text-align:left;white-space:normal;min-width:220px;max-width:320px;font-size:12px">${esc(v.action||"")}</td></tr>`;}).join("");
   return `<div class="tablewrap"><table><thead><tr>${th}</tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
