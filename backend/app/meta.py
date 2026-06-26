@@ -17,8 +17,19 @@ BASE = f"https://graph.facebook.com/{settings.META_API_VERSION}"
 PURCHASE_TYPES = ["omni_purchase", "purchase", "offsite_conversion.fb_pixel_purchase"]
 CREATIVE_FIELDS = "id,image_hash,image_url,thumbnail_url,object_story_spec,asset_feed_spec"
 AD_DETAIL_FIELDS = (
-    f"id,created_time,effective_status,adset{{start_time}},creative{{{CREATIVE_FIELDS}}}"
+    f"id,created_time,updated_time,effective_status,adset{{start_time}},creative{{{CREATIVE_FIELDS}}}"
 )
+STATUS_LABELS = {
+    "ACTIVE": "Live",
+    "PAUSED": "Paused",
+    "CAMPAIGN_PAUSED": "Campaign paused",
+    "ADSET_PAUSED": "Ad set paused",
+    "ARCHIVED": "Archived",
+    "DELETED": "Deleted",
+    "DISAPPROVED": "Disapproved",
+    "PENDING_REVIEW": "In review",
+    "WITH_ISSUES": "Has issues",
+}
 PREVIEW_FORMATS = (
     "DESKTOP_FEED_STANDARD",
     "MOBILE_FEED_STANDARD",
@@ -528,6 +539,7 @@ async def _fetch_one_ad_meta(
     return ad_id, {
         "thumb": image_url or _pick_creative_url(creative),
         "created_time": ad.get("created_time"),
+        "updated_time": ad.get("updated_time"),
         "effective_status": ad.get("effective_status"),
         "adset_start": (ad.get("adset") or {}).get("start_time"),
     }
@@ -604,8 +616,18 @@ def _parse_meta_time(val: str | None) -> datetime | None:
         return None
 
 
+def _status_label(status: str) -> str:
+    if not status:
+        return "Unknown"
+    return STATUS_LABELS.get(status, status.replace("_", " ").title())
+
+
+def _is_delivering(status: str) -> bool:
+    return status == "ACTIVE"
+
+
 def _live_since(info: dict) -> datetime | None:
-    """Best estimate of when this ad started delivering."""
+    """Best estimate of when this ad was created / scheduled to start."""
     created = _parse_meta_time(info.get("created_time"))
     start = _parse_meta_time(info.get("adset_start"))
     if created and start:
@@ -650,13 +672,18 @@ def normalize(rows: list[dict], ad_meta: dict, account_id: str = "") -> list[dic
             thumb = f"/api/ad-image?account={account_id}&ad={ad_id}"
         since = _live_since(info)
         days = _days_live(since)
+        status = info.get("effective_status") or ""
+        status_updated = _parse_meta_time(info.get("updated_time"))
         out.append({
             "ad_id": ad_id,
             "name": r.get("ad_name") or "Untitled ad",
             "campaign": r.get("campaign_name") or "Unknown campaign",
             "adset": r.get("adset_name") or "",
             "thumb": thumb,
-            "status": info.get("effective_status") or "",
+            "status": status,
+            "status_label": _status_label(status),
+            "is_delivering": _is_delivering(status),
+            "status_updated": status_updated.isoformat() if status_updated else None,
             "live_since": since.isoformat() if since else None,
             "days_live": days,
             "spend": spend,

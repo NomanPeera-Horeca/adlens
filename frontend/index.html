@@ -64,7 +64,13 @@
   .thumb img{width:100%;height:100%;min-width:100%;min-height:100%;object-fit:cover;cursor:zoom-in;image-rendering:auto;display:block}
   .thumb .ph{color:var(--faint);font-size:11px;font-weight:600}
   .live-badge{position:absolute;bottom:8px;left:8px;background:rgba(15,27,45,.82);color:#fff;font-size:10px;font-weight:700;padding:4px 7px;border-radius:6px;letter-spacing:.2px;backdrop-filter:blur(4px)}
+  .delivery-badge{position:absolute;top:10px;left:10px;font-size:10px;font-weight:800;letter-spacing:.4px;padding:5px 9px;border-radius:20px;text-transform:uppercase;z-index:2;white-space:nowrap}
+  .delivery-badge.live{color:#fff;background:var(--green);box-shadow:0 2px 10px rgba(22,163,74,.35)}
+  .delivery-badge.paused{color:#586073;background:rgba(255,255,255,.94);border:1px solid var(--line)}
   .live-meta{color:var(--muted);font-size:10.5px;font-weight:600;margin-bottom:6px}
+  .delivery-meta{font-size:10.5px;font-weight:600;margin-bottom:6px}
+  .delivery-meta.on{color:var(--green)}
+  .delivery-meta.off{color:var(--muted)}
   .badge{position:absolute;top:10px;right:10px;font-size:10.5px;font-weight:800;letter-spacing:.5px;padding:5px 9px;border-radius:20px;text-transform:uppercase;color:#fff}
   .badge.scale{background:var(--green)}.badge.watch{background:var(--amber)}.badge.kill{background:var(--red)}.badge.data{background:#8b95a5}
   .card-body{padding:12px 14px 14px}
@@ -212,10 +218,32 @@ function fmtLiveDate(iso){
 function liveLabel(a,short=false){
   if(a.days_live==null) return short?"":"—";
   const days=Number(a.days_live);
-  const unit=days===1?"day":"days";
-  if(short) return `${days}d live`;
   const since=fmtLiveDate(a.live_since);
-  return `${days} ${unit} live${since?` · since ${since}`:""}`;
+  if(short) return `${days}d`;
+  return `${days} days old${since?` · since ${since}`:""}`;
+}
+function isAdDelivering(a){
+  return !!(a.is_delivering || a.status==="ACTIVE");
+}
+function deliveryThumbBadge(a){
+  if(isAdDelivering(a)) return `<span class="delivery-badge live">● Live</span>`;
+  const when=fmtLiveDate(a.status_updated);
+  const tip=a.status_label||"Paused";
+  const label=when?`Paused · ${when}`:"Paused";
+  return `<span class="delivery-badge paused" title="${esc(tip)}">${esc(label)}</span>`;
+}
+function deliveryMetaLine(a){
+  if(isAdDelivering(a)) return `<div class="delivery-meta on">Delivering now</div>`;
+  const when=fmtLiveDate(a.status_updated);
+  const reason=a.status_label&&a.status_label!=="Paused"?` (${a.status_label})`:"";
+  if(when) return `<div class="delivery-meta off">Paused · ${esc(when)}${esc(reason)}</div>`;
+  return `<div class="delivery-meta off">${esc(a.status_label||"Not delivering")}</div>`;
+}
+function deliveryTableCell(a){
+  if(isAdDelivering(a)) return `<span class="status-live">● Live</span>`;
+  const when=fmtLiveDate(a.status_updated);
+  const tip=esc(a.status_label||"Paused");
+  return `<span class="status-live none" title="${tip}">${when?`Paused · ${when}`:"Paused"}</span>`;
 }
 
 let ADS=[],CAMPAIGNS=[],LEVEL=sessionStorage.getItem("adlens_level")||"campaigns",VIEW="cards",SORT="spend",FILTER="all",SEARCH="",CAMP_FILTER="",ME=null,SYNCED_AT=null,CACHED=false,STALE_ERROR="",CAMPAIGN_COUNT=0,RANGE_LIMITED=false;
@@ -505,12 +533,13 @@ function campaignTableHTML(list){
 function cardHTML(a){
   const v=a.verdict, t=adThumbHTML(a,false);
   const ctrCls=a.ctr>=4?"hot":(a.ctr<1.5?"cold":"");
-  const live=liveLabel(a), liveShort=liveLabel(a,true);
-  const liveBadge=liveShort?`<span class="live-badge" title="${esc(live)}">${esc(liveShort)}</span>`:"";
-  return `<div class="card v-${v.key}"><div class="thumb">${t}${liveBadge}<span class="badge ${v.key}">${v.label}</span></div>
+  const age=liveLabel(a), ageShort=liveLabel(a,true);
+  const ageBadge=ageShort?`<span class="live-badge" title="${esc(age)}">${esc(ageShort)}</span>`:"";
+  return `<div class="card v-${v.key}"><div class="thumb">${t}${deliveryThumbBadge(a)}${ageBadge}<span class="badge ${v.key}">${v.label}</span></div>
    <div class="card-body">   <div class="c-name" title="${esc(a.name)}">${esc(a.name)}</div>
    <div class="c-meta">${esc(trunc(a.campaign||"",48))}</div>
-   ${live?`<div class="live-meta">${esc(live)}</div>`:""}
+   ${deliveryMetaLine(a)}
+   ${age?`<div class="live-meta">${esc(age)}</div>`:""}
    <div class="c-meta num">${num(a.impressions)} impr · ${num(a.clicks)} clicks</div>
    <div class="rows">
      <div class="row"><span class="l">Spend</span><span class="vv num">${usd(a.spend)}</span></div>
@@ -522,12 +551,13 @@ function cardHTML(a){
    </div></div></div>`;
 }
 function tableHTML(list){
-  const cols=[["name","Creative"],["campaign","Campaign"],["days_live","Live"],["score","Verdict"],["spend","Spend"],["roas","ROAS"],["pvalue","Purch. value"],["ctr","CTR"],["cpc","CPC"],["cpm","CPM"],["purchases","Purchases"]];
+  const cols=[["name","Creative"],["campaign","Campaign"],["status","Delivery"],["days_live","Age"],["score","Verdict"],["spend","Spend"],["roas","ROAS"],["pvalue","Purch. value"],["ctr","CTR"],["cpc","CPC"],["cpm","CPM"],["purchases","Purchases"]];
   const th=cols.map(c=>`<th data-col="${c[0]}">${c[1]}</th>`).join("");
-  const rows=list.map(a=>{const v=a.verdict,m=adThumbHTML(a,true), live=liveLabel(a);
+  const rows=list.map(a=>{const v=a.verdict,m=adThumbHTML(a,true), age=liveLabel(a);
     return `<tr><td class="creative">${m}<span>${esc(trunc(a.name,40))}</span></td>
     <td style="text-align:left">${esc(trunc(a.campaign||"",36))}</td>
-    <td class="num" style="text-align:left;white-space:nowrap" title="${esc(live)}">${esc(live)}</td>
+    <td class="num" style="text-align:left;white-space:nowrap">${deliveryTableCell(a)}</td>
+    <td class="num" style="text-align:left;white-space:nowrap" title="${esc(age)}">${esc(age)}</td>
     <td style="text-align:left"><span class="vbadge ${v.key}">${v.label}</span></td>
     <td class="num">${usd(a.spend)}</td><td class="num">${a.roas!=null?a.roas.toFixed(2)+"x":"—"}</td>
     <td class="num">${a.pvalue?usd(a.pvalue):"—"}</td><td class="num ${a.ctr>=4?"good":""}">${pct(a.ctr)}</td>
@@ -541,7 +571,7 @@ function demoData(){
   ["walkinref1011 — Walk-in coolers",201.28,2.36,0.38,8.88,22600],["Test - restaurantsetup1403",412.24,2.4,0.97,23.19,18000],
   ["New Engagement Ad — bulk order",409.33,3.91,0.66,25.97,16000],["New Engagement Ad — ranges",177.46,1.76,0.85,14.91,11900],
   ["restaurantsetup1403 — design",143.13,1.63,1.51,24.63,5800],["Restaurant Startup Package",71.20,1.38,1.62,22.25,3200]];
-  ADS=s.map((r,i)=>({name:r[0],thumb:null,spend:r[1],ctr:r[2],cpc:r[3],cpm:r[4],impressions:r[5],clicks:Math.round(r[5]*r[2]/100),purchases:0,pvalue:0,roas:null,days_live:14+i*3,live_since:new Date(Date.now()-(14+i*3)*864e5).toISOString()}));
+  ADS=s.map((r,i)=>({name:r[0],thumb:null,spend:r[1],ctr:r[2],cpc:r[3],cpm:r[4],impressions:r[5],clicks:Math.round(r[5]*r[2]/100),purchases:0,pvalue:0,roas:null,days_live:14+i*3,live_since:new Date(Date.now()-(14+i*3)*864e5).toISOString(),is_delivering:i%3!==1,status:i%3!==1?"ACTIVE":"PAUSED",status_label:i%3!==1?"Live":"Paused",status_updated:i%3===1?new Date(Date.now()-5*864e5).toISOString():null}));
   scoreLocally(); $("#splash")&&$("#splash").remove(); render();
 }
 // mirror of backend scoring so the demo works with no server data
