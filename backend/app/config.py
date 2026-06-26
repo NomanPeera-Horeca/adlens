@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     ADMIN_EMAILS: str = "nomanpeera@gmail.com"
     ADMIN_FB_IDS: str = ""
 
+    # --- Optional AI creative vision (OpenAI) ---
+    OPENAI_API_KEY: str = ""
+    OPENAI_VISION_MODEL: str = "gpt-4o-mini"
+    AI_VISION_LIMIT: int = 16          # max creatives analyzed per sync refresh
+
     @property
     def meta_redirect_uri(self) -> str:
         """Use explicit META_REDIRECT_URI, or derive from BASE_URL in prod."""

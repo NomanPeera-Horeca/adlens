@@ -8,6 +8,7 @@ creative refresh, not automatic kill.
 from statistics import mean
 
 from .categories import categorize
+from .goals import infer_ad_goal
 
 DEFAULT_RULES = {
     "target_roas": 2.0,
@@ -306,9 +307,12 @@ def verdict(ad: dict, ctx: dict, rules: dict) -> dict:
 def _score_one_asset(asset: dict, siblings: list[dict], ad: dict) -> dict:
     """Rank creatives within one ad — identify which image to remove."""
     spend = float(asset.get("spend") or 0)
-    calls = int(asset.get("calls") or 0)
     ctr = float(asset.get("ctr") or 0)
-    cpcall = asset.get("cost_per_call")
+    goal = ad.get("goal") or {}
+    metric = goal.get("metric") or "calls"
+    cost_key = goal.get("cost_key") or "cost_per_call"
+    count = int(asset.get(metric) or 0)
+    cpa = asset.get(cost_key) if cost_key else None
     reasons: list[str] = []
 
     if spend < 5:
@@ -318,29 +322,30 @@ def _score_one_asset(asset: dict, siblings: list[dict], ad: dict) -> dict:
             [f"${spend:.0f} spent"],
         )
 
-    sibling_calls = [s for s in siblings if (s.get("calls") or 0) > 0 and s is not asset]
-    best_cpcall = min((s.get("cost_per_call") or 999999 for s in sibling_calls), default=None)
+    sibling_active = [s for s in siblings if s is not asset and int(s.get(metric) or 0) > 0]
+    best_cpa = min((s.get(cost_key) or 999999 for s in sibling_active), default=None) if cost_key else None
     best_ctr = max((s.get("ctr") or 0 for s in siblings if s is not asset), default=0)
     score = 0.0
+    metric_label = metric.replace("_", " ")
 
-    if calls == 0 and spend >= 30:
+    if count == 0 and spend >= 30:
         return _pack(
             "kill", "Remove", -100,
-            "Turn off this image in Ads Manager — it spent without generating calls.",
-            [f"${spend:.0f} spend · 0 calls · CTR {ctr:.2f}%"],
+            f"Turn off this creative — it spent without generating {metric_label}.",
+            [f"${spend:.0f} spend · 0 {metric_label} · CTR {ctr:.2f}%"],
         )
 
-    if cpcall and best_cpcall and best_cpcall < 999999:
-        ratio = cpcall / best_cpcall
+    if cpa and best_cpa and best_cpa < 999999:
+        ratio = cpa / best_cpa
         if ratio <= 0.85:
             score += 80
-            reasons.append(f"${cpcall:.2f}/call — best or near-best in this ad")
+            reasons.append(f"${cpa:.2f} cost — best or near-best in this ad")
         elif ratio <= 1.15:
             score += 30
-            reasons.append(f"${cpcall:.2f}/call — similar to other creatives")
+            reasons.append(f"${cpa:.2f} cost — similar to other creatives")
         else:
             score -= 60
-            reasons.append(f"${cpcall:.2f}/call — {ratio:.1f}× worse than best creative in ad")
+            reasons.append(f"${cpa:.2f} cost — {ratio:.1f}× worse than best creative")
 
     if best_ctr > 0:
         if ctr >= best_ctr * 1.05:
@@ -350,13 +355,33 @@ def _score_one_asset(asset: dict, siblings: list[dict], ad: dict) -> dict:
             score -= 25
             reasons.append(f"CTR {ctr:.2f}% — weakest hook in this ad")
 
-    reasons.insert(0, f"{calls} calls · ${spend:.0f} spend")
+    reasons.insert(0, f"{count} {metric_label} · ${spend:.0f} spend")
 
     if score >= 70:
         return _pack("scale", "Keep", score, "Best-performing creative in this ad — leave it running.", reasons)
     if score <= -20:
-        return _pack("kill", "Remove", score, "Remove or pause this image in Meta — shift rotation to better creatives.", reasons)
-    return _pack("watch", "Watch", score, "Mixed signals — give it more spend or replace if another creative wins.", reasons)
+        return _pack("kill", "Remove", score, "Remove this creative in Meta — shift budget to winners in this ad.", reasons)
+    return _pack("watch", "Watch", score, "Mixed signals — keep only if you need more data.", reasons)
+
+
+def _finalize_ad_assets(ad: dict) -> None:
+    assets = ad.get("assets") or []
+    shown, hidden = [], 0
+    for a in assets:
+        vk = (a.get("verdict") or {}).get("key", "data")
+        if vk == "data" and float(a.get("spend") or 0) < 25:
+            hidden += 1
+            continue
+        shown.append(a)
+    ad["assets"] = shown
+    ad["assets_summary"] = {
+        "unique": len(assets),
+        "shown": len(shown),
+        "keep": sum(1 for a in shown if (a.get("verdict") or {}).get("key") == "scale"),
+        "remove": sum(1 for a in shown if (a.get("verdict") or {}).get("key") == "kill"),
+        "watch": sum(1 for a in shown if (a.get("verdict") or {}).get("key") == "watch"),
+        "hidden": hidden,
+    }
 
 
 def score_assets(ad: dict) -> list[dict]:
@@ -375,10 +400,12 @@ def score_all(ads: list[dict], rules: dict | None = None) -> list[dict]:
     rules = {**DEFAULT_RULES, **(rules or {})}
     for a in ads:
         a["category"] = categorize(a.get("name") or "", a.get("campaign") or "")
+        a["goal"] = infer_ad_goal(a)
     ctx = build_context(ads, rules)
     for a in ads:
         a["verdict"] = verdict(a, ctx, rules)
         a["scoring_mode"] = ctx["mode"]
         if a.get("assets"):
             a["assets"] = score_assets(a)
+            _finalize_ad_assets(a)
     return ads

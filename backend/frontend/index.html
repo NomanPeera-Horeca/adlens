@@ -92,23 +92,49 @@
   .action-box p{margin:0 0 6px;font-size:12px;line-height:1.45;color:var(--text)}
   .action-reasons{margin:0;padding-left:16px;font-size:11px;color:var(--muted);line-height:1.4}
   .action-reasons li{margin:2px 0}
-  .cat-badge{display:inline-block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:3px 7px;border-radius:6px;background:#eef1f6;color:#4a5568;margin-bottom:2px}
-  .assets-box{border:1px solid var(--line);border-radius:10px;background:#fafbfc;overflow:hidden}
-  .assets-head{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;background:#f3f5f8;border-bottom:1px solid var(--line);font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.45px;color:var(--muted)}
-  .assets-toggle{background:transparent;border:none;font-size:11px;font-weight:700;color:var(--ink);padding:2px 4px}
-  .assets-list{padding:6px;display:flex;flex-direction:column;gap:6px}
-  .asset-row{display:grid;grid-template-columns:44px 1fr auto;gap:8px;align-items:center;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:#fff}
-  .asset-row img,.asset-row .asset-ph{width:44px;height:44px;border-radius:6px;object-fit:cover;background:var(--slate-bg)}
-  .asset-ph{display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--faint);font-weight:700}
-  .asset-meta{font-size:11px;line-height:1.35}
-  .asset-meta .asset-name{font-weight:700;color:var(--text);margin-bottom:2px}
-  .asset-metrics{font-size:10px;color:var(--muted)}
-  .asset-verdict{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.35px;padding:4px 7px;border-radius:6px;white-space:nowrap}
-  .asset-verdict.scale{color:var(--green);background:var(--green-bg)}
-  .asset-verdict.watch{color:#7a5410;background:var(--amber-bg)}
-  .asset-verdict.kill{color:var(--red);background:var(--red-bg)}
-  .asset-verdict.data{color:var(--muted);background:#eef1f6}
-  .asset-action{font-size:10px;color:var(--muted);margin-top:3px;line-height:1.3}
+  .cat-badge{display:inline-block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:3px 7px;border-radius:6px;background:#eef1f6;color:#4a5568;margin-right:6px}
+  .goal-badge{display:inline-block;font-size:9.5px;font-weight:700;letter-spacing:.25px;padding:3px 8px;border-radius:6px;background:#e8f0fe;color:#1a4fad;margin-bottom:4px}
+  .badge-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:2px 0 4px}
+  .creatives-panel{border:1px solid var(--line);border-radius:12px;background:linear-gradient(180deg,#fcfdfe 0%,#f6f8fb 100%);overflow:hidden}
+  .creatives-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line)}
+  .creatives-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.45px;color:var(--muted)}
+  .creatives-chips{display:flex;flex-wrap:wrap;gap:5px}
+  .c-chip{font-size:10px;font-weight:700;padding:3px 8px;border-radius:999px;background:#fff;border:1px solid var(--line);color:var(--muted)}
+  .c-chip.keep{color:#0f7a37;border-color:#c8e6d0;background:var(--green-bg)}
+  .c-chip.remove{color:#a8132a;border-color:#f0c4cb;background:var(--red-bg)}
+  .c-chip.watch{color:#7a5410;border-color:#efd9ad;background:var(--amber-bg)}
+  .creatives-strip{display:flex;gap:8px;padding:10px 12px;overflow-x:auto;scrollbar-width:thin}
+  .c-thumb{position:relative;flex:0 0 72px;width:72px;height:72px;border-radius:10px;overflow:hidden;border:2px solid var(--line);background:var(--slate-bg);padding:0;cursor:zoom-in}
+  .c-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+  .c-thumb .c-ph{width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;color:var(--faint)}
+  .c-thumb.keep{border-color:var(--green)}.c-thumb.remove{border-color:var(--red)}.c-thumb.watch{border-color:var(--amber)}
+  .c-thumb .c-dot{position:absolute;bottom:4px;right:4px;width:8px;height:8px;border-radius:50%;background:var(--muted);border:1px solid #fff}
+  .c-thumb.keep .c-dot{background:var(--green)}.c-thumb.remove .c-dot{background:var(--red)}.c-thumb.watch .c-dot{background:var(--amber)}
+  .creatives-foot{padding:0 12px 10px}
+  .creatives-toggle{width:100%;background:#fff;border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:11.5px;font-weight:700;color:var(--ink);text-align:left}
+  .creatives-toggle:hover{background:#f8f9fb}
+  .creatives-detail{display:none;padding:0 12px 12px;flex-direction:column;gap:8px}
+  .creatives-detail.open{display:flex}
+  .c-row{display:grid;grid-template-columns:52px 1fr auto;gap:10px;align-items:start;padding:10px;background:#fff;border:1px solid var(--line);border-radius:10px}
+  .c-row img,.c-row .c-ph{width:52px;height:52px;border-radius:8px;object-fit:cover;background:var(--slate-bg);cursor:zoom-in}
+  .c-row .c-ph{display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--faint);font-weight:700}
+  .c-row-main{min-width:0}
+  .c-row-top{display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap}
+  .c-row-name{font-size:12px;font-weight:700;color:var(--text);line-height:1.25}
+  .c-row-stats{font-size:11px;color:var(--muted);line-height:1.4}
+  .c-row-insight{font-size:11px;color:#334155;margin-top:5px;line-height:1.4;padding:6px 8px;background:#f8fafc;border-radius:6px;border-left:3px solid #cbd5e1}
+  .c-row-insight.ai{border-left-color:#6366f1;background:#f5f3ff}
+  .c-row-verdict{font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.35px;padding:5px 8px;border-radius:6px;white-space:nowrap;margin-top:2px}
+  .c-row-verdict.scale{color:var(--green);background:var(--green-bg)}
+  .c-row-verdict.watch{color:#7a5410;background:var(--amber-bg)}
+  .c-row-verdict.kill{color:var(--red);background:var(--red-bg)}
+  .c-hidden-note{font-size:10.5px;color:var(--faint);padding:0 12px 10px;font-style:italic}
+  .action-box.compact{padding:11px 12px}
+  .action-lead{margin:0;font-size:13px;font-weight:600;line-height:1.45;color:var(--text)}
+  .action-why{margin-top:8px;font-size:11px;color:var(--muted)}
+  .action-why summary{cursor:pointer;font-weight:700;color:var(--ink);list-style:none}
+  .action-why summary::-webkit-details-marker{display:none}
+  .action-why ul{margin:6px 0 0;padding-left:16px;line-height:1.4}
   .rows{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px}
   .row{display:flex;justify-content:space-between;font-size:12px}.row .l{color:var(--muted)}.row .vv{font-weight:700}
   .hot{color:var(--green)}.cold{color:var(--red)}
@@ -314,22 +340,39 @@ function ctrTone(a,avgCtr){
 function actionHTML(v){
   if(!v||!v.action) return "";
   const reasons=(v.reasons||[]).slice(0,4).map(r=>`<li>${esc(r)}</li>`).join("");
-  return `<div class="action-box"><div class="action-title">${esc(v.label)} — action</div><p>${esc(v.action)}</p>${reasons?`<ul class="action-reasons">${reasons}</ul>`:""}</div>`;
+  return `<div class="action-box compact"><div class="action-title">${esc(v.label)}</div><p class="action-lead">${esc(v.action)}</p>${reasons?`<details class="action-why"><summary>Why this verdict</summary><ul>${reasons}</ul></details>`:""}</div>`;
+}
+function goalBadgeHTML(a){
+  const g=a.goal; if(!g||!g.label) return "";
+  const icons={calls:"📞",leads:"📋",traffic:"🌐",purchases:"💰",messages:"💬",engagement:"👆"};
+  return `<span class="goal-badge" title="Scored against this outcome">${icons[g.key]||"🎯"} Goal: ${esc(g.label)}</span>`;
+}
+function badgeRowHTML(a){
+  const cat=categoryBadgeHTML(a), goal=goalBadgeHTML(a);
+  if(!cat&&!goal) return "";
+  return `<div class="badge-row">${cat}${goal}</div>`;
+}
+function primaryCostLabel(a){
+  const g=a.goal||{};
+  if(g.key==="traffic") return ["Landing views", a.landing_views||0, a.cost_per_lpv];
+  if(g.key==="leads") return ["Leads", a.leads||0, a.cost_per_lead];
+  return ["Calls", a.calls||0, a.cost_per_call];
 }
 function metricGridHTML(a,rows){
   const avgCall=avgCpa(rows,"calls"), avgCtr=rows.reduce((s,x)=>s+(x.ctr||0),0)/(rows.length||1);
-  const calls=a.calls?num(a.calls):"0";
-  const cpcall=a.cost_per_call?usd(a.cost_per_call):"—";
+  const [pLabel,pVal,pCost]=primaryCostLabel(a);
+  const costVal=pCost?usd(pCost):"—";
+  const tone=pLabel==="Calls"?callCostTone(a,avgCall):"";
   return `<div class="metric-grid">
-    ${metricCell("Calls",calls,a.calls?"":"")}
-    ${metricCell("Cost / call",cpcall,callCostTone(a,avgCall))}
+    ${metricCell(pLabel,pVal?num(pVal):"0",pVal?"":"")}
+    ${metricCell(pLabel==="Calls"?"Cost / call":pLabel==="Leads"?"Cost / lead":"Cost / visit",costVal,tone)}
     ${metricCell("CTR",pct(a.ctr),ctrTone(a,avgCtr))}
     ${metricCell("Spend",usd(a.spend),"")}
   </div>`;
 }
 function scoringNote(rows){
   const mode=rows.find(a=>a.scoring_mode)?.scoring_mode;
-  if(mode==="calls") return "Verdicts use <b>cost per call</b>, <b>call volume</b>, <b>CTR</b>, and <b>product category</b> (walk-in vs fridge). Expand a card to compare creatives inside each ad.";
+  if(mode==="calls") return "Each ad shows its <b>goal</b> (calls vs site visitors), unique creatives only, and AI/heuristic creative notes. Click any thumbnail to enlarge.";
   if(mode==="leads") return "Verdicts use <b>cost per lead</b> and lead volume from Meta.";
   if(mode==="roas") return "Verdicts use <b>ROAS / purchases</b> from Meta.";
   return "No calls or leads from Meta in this period — add call tracking, then Refresh.";
@@ -338,31 +381,71 @@ function categoryBadgeHTML(a){
   const c=a.category; if(!c||!c.label||c.key==="general") return "";
   return `<span class="cat-badge" title="~$${(c.ticket_usd||0).toLocaleString()} avg ticket">${esc(c.label)}</span>`;
 }
-function assetThumbHTML(asset){
-  if(asset.thumb) return `<img src="${esc(asset.thumb)}" alt="" loading="lazy" onerror="this.outerHTML='<div class=asset-ph>IMG</div>'">`;
-  return `<div class="asset-ph">${esc((asset.asset_type||"img").slice(0,3).toUpperCase())}</div>`;
+function assetThumbNode(asset, size, caption){
+  const cap=esc(caption||asset.name||"Creative");
+  if(asset.thumb) return `<img class="zoomable" src="${esc(asset.thumb)}" data-caption="${cap}" alt="${cap}" loading="lazy" onerror="this.outerHTML='<div class=c-ph>IMG</div>'">`;
+  return `<div class="c-ph">${esc((asset.asset_type||"img").slice(0,3).toUpperCase())}</div>`;
+}
+function assetStatsLine(asset, ad){
+  const g=ad.goal||{};
+  const metric=g.metric||"calls";
+  const costKey=g.cost_key||"cost_per_call";
+  const count=asset[metric]||0;
+  const cost=asset[costKey]?usd(asset[costKey]):"—";
+  const variants=asset.variant_count>1?` · ${asset.variant_count} merged`:"";
+  return `${count} ${metric.replace(/_/g," ")} · ${cost} · CTR ${pct(asset.ctr||0)} · ${usd(asset.spend||0)}${variants}`;
+}
+function insightHTML(asset){
+  const ins=asset.insight; if(!ins) return "";
+  const ai=ins.ai?" ai":"";
+  const tip=ins.tip||ins.summary||"";
+  const visual=ins.visual?`<b>${esc(ins.visual)}</b>${ins.hook?` · ${esc(ins.hook)}`:""}`:"";
+  return `<div class="c-row-insight${ai}">${visual?visual+" — ":""}${esc(tip)}</div>`;
 }
 function assetsHTML(a){
   const assets=(a.assets||[]).filter(x=>(x.spend||0)>0);
-  if(!assets.length) return "";
-  const multi=assets.length>1;
-  const id=`assets-${esc(a.ad_id||a.name).replace(/[^a-z0-9]/gi,"")}`;
-  const rows=assets.map(asset=>{
-    const v=asset.verdict||{};
-    const cpcall=asset.cost_per_call?usd(asset.cost_per_call):"—";
-    return `<div class="asset-row">
-      ${assetThumbHTML(asset)}
-      <div class="asset-meta">
-        <div class="asset-name">${esc(trunc(asset.name||asset.asset_id||"Creative",28))}</div>
-        <div class="asset-metrics">${asset.calls||0} calls · ${cpcall} · CTR ${pct(asset.ctr||0)} · ${usd(asset.spend||0)}</div>
-        ${v.action?`<div class="asset-action">${esc(trunc(v.action,90))}</div>`:""}
+  const sum=a.assets_summary||{};
+  if(!assets.length&&!sum.unique) return "";
+  const id=`cr-${String(a.ad_id||a.name).replace(/[^a-z0-9]/gi,"")}`;
+  const chips=[
+    sum.keep?`<span class="c-chip keep">${sum.keep} keep</span>`:"",
+    sum.remove?`<span class="c-chip remove">${sum.remove} remove</span>`:"",
+    sum.watch?`<span class="c-chip watch">${sum.watch} watch</span>`:"",
+  ].filter(Boolean).join("");
+  const strip=assets.slice(0,8).map(asset=>{
+    const v=asset.verdict||{}, vk=v.key||"data";
+    const cap=`${a.name||"Ad"} · ${asset.name||"Creative"} · ${assetStatsLine(asset,a)}`;
+    const img=asset.thumb
+      ? `<img class="zoomable" src="${esc(asset.thumb)}" data-caption="${esc(cap)}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='<div class=c-ph>IMG</div>'">`
+      : `<div class="c-ph">${esc((asset.asset_type||"img").slice(0,3).toUpperCase())}</div>`;
+    return `<button type="button" class="c-thumb ${esc(vk)}" title="${esc(cap)}">${img}<span class="c-dot"></span></button>`;
+  }).join("");
+  const detail=assets.map(asset=>{
+    const v=asset.verdict||{}, vk=v.key||"data";
+    const cap=`${a.name||"Ad"} · ${asset.name||"Creative"}`;
+    const img=asset.thumb
+      ? `<img class="zoomable" src="${esc(asset.thumb)}" data-caption="${esc(cap)}" alt="" loading="lazy" onerror="this.outerHTML='<div class=c-ph>IMG</div>'">`
+      : `<div class="c-ph">${esc((asset.asset_type||"img").slice(0,3).toUpperCase())}</div>`;
+    return `<div class="c-row">
+      <div>${img}</div>
+      <div class="c-row-main">
+        <div class="c-row-top"><span class="c-row-name">${esc(trunc(asset.name||"Creative",32))}</span></div>
+        <div class="c-row-stats">${esc(assetStatsLine(asset,a))}</div>
+        ${insightHTML(asset)}
       </div>
-      <span class="asset-verdict ${esc(v.key||"data")}">${esc(v.label||"—")}</span>
+      <span class="c-row-verdict ${esc(vk)}">${esc(v.label||"—")}</span>
     </div>`;
   }).join("");
-  return `<div class="assets-box">
-    <div class="assets-head"><span>Creatives in this ad (${assets.length})</span>${multi?`<button type="button" class="assets-toggle" data-toggle="${id}">Hide</button>`:""}</div>
-    <div class="assets-list" id="${id}">${rows}</div>
+  const hidden=sum.hidden?`<div class="c-hidden-note">${sum.hidden} low-spend duplicate${sum.hidden>1?"s":""} hidden · same image hash merged</div>`:"";
+  return `<div class="creatives-panel">
+    <div class="creatives-head">
+      <span class="creatives-title">${sum.unique||assets.length} unique creative${(sum.unique||assets.length)!==1?"s":""}</span>
+      <div class="creatives-chips">${chips||`<span class="c-chip">${assets.length} shown</span>`}</div>
+    </div>
+    ${strip?`<div class="creatives-strip">${strip}</div>`:""}
+    ${hidden}
+    ${detail?`<div class="creatives-foot"><button type="button" class="creatives-toggle" data-panel="${id}">View creative breakdown</button></div>
+    <div class="creatives-detail" id="${id}">${detail}</div>`:""}
   </div>`;
 }
 
@@ -675,13 +758,13 @@ function cardHTML(a){
    <div class="thumb">${t}${deliveryThumbBadge(a)}${ageBadge}<span class="badge ${v.key}">${v.label}</span></div>
    <div class="card-body">
    <div class="card-head"><div class="c-name" title="${esc(a.name)}">${esc(a.name)}</div></div>
-   ${categoryBadgeHTML(a)}
+   ${badgeRowHTML(a)}
    <div class="c-meta">${esc(trunc(a.campaign||"",52))}</div>
    <div class="meta-line">${delivery}${ageShort?` · ${esc(ageShort)} old`:""}</div>
    ${metricGridHTML(a,rows)}
    ${extra}
-   ${assetsHTML(a)}
    ${actionHTML(v)}
+   ${assetsHTML(a)}
    </div></div>`;
 }
 function tableHTML(list){
@@ -724,12 +807,17 @@ document.addEventListener("click",e=>{
   if(e.target.id==="lightboxClose"||e.target.id==="lightboxBg"){ closeLightbox(); return; }
   const zoom=e.target.closest(".zoomable");
   if(zoom){ e.stopPropagation(); openLightbox(zoom.src, zoom.dataset.caption||zoom.alt); return; }
+  const thumbBtn=e.target.closest(".c-thumb");
+  if(thumbBtn){ const z=thumbBtn.querySelector(".zoomable"); if(z){ e.preventDefault(); openLightbox(z.src, z.dataset.caption||""); return; } }
   const campCard=e.target.closest("[data-campaign]"); if(campCard&&LEVEL==="campaigns") drillIntoCampaign(campCard.dataset.campaign);
   const p=e.target.closest(".pill"); if(p){FILTER=p.dataset.f;document.querySelectorAll(".pill").forEach(x=>x.classList.remove("on"));p.classList.add("on");render();}
   const th=e.target.closest("th[data-col]"); if(th){SORT=th.dataset.col==="name"?"spend":th.dataset.col;$("#sort").value=["score","spend","days_live","calls","leads","cost_per_call","cost_per_lead","roas","ctr","cpc","cpm"].includes(SORT)?SORT:"spend";render();}
-  const tg=e.target.closest(".assets-toggle"); if(tg){
-    const list=document.getElementById(tg.dataset.toggle);
-    if(list){ const hide=list.style.display!=="none"; list.style.display=hide?"none":""; tg.textContent=hide?"Show":"Hide"; }
+  const tg=e.target.closest(".creatives-toggle"); if(tg){
+    const panel=document.getElementById(tg.dataset.panel);
+    if(panel){
+      const open=panel.classList.toggle("open");
+      tg.textContent=open?"Hide creative breakdown":"View creative breakdown";
+    }
   }
 });
 $("#viewCards").onclick=()=>{VIEW="cards";$("#viewCards").classList.add("on");$("#viewTable").classList.remove("on");render();};

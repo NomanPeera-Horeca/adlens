@@ -802,7 +802,7 @@ def _normalize_asset_row(row: dict, breakdown: str) -> dict | None:
 
 
 def group_asset_insights(rows: list[dict]) -> dict[str, list[dict]]:
-    """Group Meta asset breakdown rows by ad_id."""
+    """Group Meta asset breakdown rows by ad_id, merging duplicate image hashes."""
     by_ad: dict[str, list[dict]] = {}
     for row in rows:
         ad_id = row.get("ad_id")
@@ -815,9 +815,44 @@ def group_asset_insights(rows: list[dict]) -> dict[str, list[dict]]:
         if not asset:
             continue
         by_ad.setdefault(str(ad_id), []).append(asset)
-    for ad_id, assets in by_ad.items():
-        by_ad[ad_id] = sorted(assets, key=lambda x: (-x["spend"], -x.get("calls", 0)))
-    return by_ad
+    return {ad_id: _dedupe_assets(assets) for ad_id, assets in by_ad.items()}
+
+
+_METRIC_SUM_KEYS = (
+    "spend", "impressions", "clicks", "calls", "leads", "contacts",
+    "landing_views", "messages", "purchases", "pvalue",
+)
+
+
+def _dedupe_assets(assets: list[dict]) -> list[dict]:
+    """Club identical creatives (same Meta image/video hash) into one row."""
+    by_id: dict[str, dict] = {}
+    for a in assets:
+        key = a["asset_id"]
+        if key in by_id:
+            ex = by_id[key]
+            for k in _METRIC_SUM_KEYS:
+                ex[k] = (ex.get(k) or 0) + (a.get(k) or 0)
+            ex["variant_count"] = ex.get("variant_count", 1) + 1
+            if not ex.get("thumb") and a.get("thumb"):
+                ex["thumb"] = a["thumb"]
+        else:
+            by_id[key] = {**a, "variant_count": 1}
+    out = [_finalize_asset(ex) for ex in by_id.values()]
+    out.sort(key=lambda x: (-x["spend"], -x.get("calls", 0)))
+    return out
+
+
+def _finalize_asset(asset: dict) -> dict:
+    imp = int(asset.get("impressions") or 0)
+    clicks = int(asset.get("clicks") or 0)
+    spend = float(asset.get("spend") or 0)
+    asset["ctr"] = round(clicks / imp * 100, 2) if imp else 0.0
+    asset["cpc"] = round(spend / clicks, 2) if clicks else None
+    asset["cost_per_call"] = _cost_per(spend, asset.get("calls") or 0)
+    asset["cost_per_lead"] = _cost_per(spend, asset.get("leads") or 0)
+    asset["cost_per_lpv"] = _cost_per(spend, asset.get("landing_views") or 0)
+    return asset
 
 
 def attach_assets(ads: list[dict], asset_rows: list[dict]) -> list[dict]:
