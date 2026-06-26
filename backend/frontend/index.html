@@ -381,11 +381,6 @@ function categoryBadgeHTML(a){
   const c=a.category; if(!c||!c.label||c.key==="general") return "";
   return `<span class="cat-badge" title="~$${(c.ticket_usd||0).toLocaleString()} avg ticket">${esc(c.label)}</span>`;
 }
-function assetThumbNode(asset, size, caption){
-  const cap=esc(caption||asset.name||"Creative");
-  if(asset.thumb) return `<img class="zoomable" src="${esc(asset.thumb)}" data-caption="${cap}" alt="${cap}" loading="lazy" onerror="this.outerHTML='<div class=c-ph>IMG</div>'">`;
-  return `<div class="c-ph">${esc((asset.asset_type||"img").slice(0,3).toUpperCase())}</div>`;
-}
 function assetStatsLine(asset, ad){
   const g=ad.goal||{};
   const metric=g.metric||"calls";
