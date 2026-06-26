@@ -787,10 +787,11 @@ def _normalize_asset_row(row: dict, breakdown: str) -> dict | None:
     clicks = int(float(row.get("clicks", 0) or 0))
     ctr = round(clicks / impressions * 100, 2) if impressions > 0 else 0.0
     conv = _conversion_fields(row)
-    return {
+    block = row.get(breakdown) or {}
+    out = {
         "asset_id": asset_id,
         "asset_type": breakdown.replace("_asset", ""),
-        "name": (row.get(breakdown) or {}).get("name") or asset_id[:12],
+        "name": block.get("name") or asset_id[:12],
         "thumb": _asset_thumb(row, breakdown),
         "spend": spend,
         "impressions": impressions,
@@ -799,6 +800,63 @@ def _normalize_asset_row(row: dict, breakdown: str) -> dict | None:
         "cpc": round(spend / clicks, 2) if clicks > 0 else None,
         **conv,
     }
+    if breakdown == "video_asset" and isinstance(block, dict):
+        vid = block.get("video_id") or block.get("id")
+        if vid:
+            out["video_id"] = str(vid)
+    return out
+
+
+async def resolve_asset_videos(token: str, ads: list[dict]) -> None:
+    """Fetch playable video URLs from Meta for video-type creative assets."""
+    video_ids: set[str] = set()
+    for ad in ads:
+        for asset in ad.get("assets") or []:
+            if asset.get("asset_type") == "video" and asset.get("video_id"):
+                video_ids.add(str(asset["video_id"]))
+    if not video_ids:
+        return
+
+    resolved: dict[str, dict] = {}
+
+    async def fetch_one(c: httpx.AsyncClient, vid: str) -> None:
+        r = await c.get(
+            f"{BASE}/{vid}",
+            params={"fields": "source,picture,title", "access_token": token},
+        )
+        if r.status_code != 200:
+            return
+        j = r.json()
+        pic = j.get("picture")
+        if isinstance(pic, str):
+            thumb = pic
+        elif isinstance(pic, dict):
+            thumb = pic.get("data", {}).get("url") if isinstance(pic.get("data"), dict) else None
+        else:
+            thumb = None
+        resolved[vid] = {"source": j.get("source"), "thumb": thumb, "title": j.get("title")}
+
+    async with httpx.AsyncClient(timeout=30) as c:
+        sem = asyncio.Semaphore(6)
+
+        async def bound(vid: str):
+            async with sem:
+                await fetch_one(c, vid)
+
+        await asyncio.gather(*[bound(v) for v in video_ids])
+
+    for ad in ads:
+        for asset in ad.get("assets") or []:
+            vid = asset.get("video_id")
+            if not vid or vid not in resolved:
+                continue
+            info = resolved[vid]
+            if info.get("source"):
+                asset["video_url"] = info["source"]
+            if not asset.get("thumb") and info.get("thumb"):
+                asset["thumb"] = info["thumb"]
+            if info.get("title") and (asset.get("name") or "").startswith((asset.get("asset_id") or "")[:8]):
+                asset["name"] = info["title"]
 
 
 def group_asset_insights(rows: list[dict]) -> dict[str, list[dict]]:

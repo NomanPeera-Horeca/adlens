@@ -160,7 +160,9 @@
   .lightbox.open{display:flex}
   .lightbox-bg{position:absolute;inset:0;background:rgba(15,27,45,.88)}
   .lightbox-frame{position:relative;max-width:min(960px,95vw);max-height:90vh;margin:0;z-index:1}
-  .lightbox-frame img{display:block;max-width:min(960px,95vw);max-height:82vh;width:auto;height:auto;object-fit:contain;border-radius:10px;box-shadow:0 20px 60px rgba(0,0,0,.45)}
+  .lightbox-frame img,.lightbox-frame video{display:block;max-width:min(960px,95vw);max-height:82vh;width:auto;height:auto;object-fit:contain;border-radius:10px;box-shadow:0 20px 60px rgba(0,0,0,.45)}
+  .lightbox-frame video{background:#000}
+  .c-thumb .play-icon{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(15,27,45,.35);color:#fff;font-size:22px;pointer-events:none}
   .lightbox-frame figcaption{color:#fff;text-align:center;font-size:13px;margin-top:10px;opacity:.9}
   .lightbox-close{position:absolute;top:-12px;right:-12px;width:36px;height:36px;border:none;border-radius:50%;background:#fff;color:var(--ink);font-size:22px;line-height:1;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.25)}
   .vbadge{display:inline-block;font-size:10px;font-weight:800;letter-spacing:.4px;padding:3px 8px;border-radius:20px;text-transform:uppercase}
@@ -266,6 +268,7 @@
   <figure class="lightbox-frame">
     <button type="button" class="lightbox-close" id="lightboxClose" aria-label="Close">×</button>
     <img id="lightboxImg" alt="" />
+    <video id="lightboxVideo" controls playsinline style="display:none"></video>
     <figcaption id="lightboxCap"></figcaption>
   </figure>
 </div>
@@ -435,19 +438,21 @@ function assetsHTML(a){
   const strip=assets.slice(0,8).map(asset=>{
     const v=asset.verdict||{}, vk=v.key||"data";
     const cap=`${a.name||"Ad"} · ${asset.name||"Creative"} · ${assetStatsLine(asset,a)}`;
-    const img=asset.thumb
-      ? `<img class="zoomable" src="${esc(asset.thumb)}" data-caption="${esc(cap)}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='<div class=c-ph>IMG</div>'">`
-      : `<div class="c-ph">${esc((asset.asset_type||"img").slice(0,3).toUpperCase())}</div>`;
-    return `<button type="button" class="c-thumb ${esc(vk)}" title="${esc(cap)}">${img}<span class="c-dot"></span></button>`;
+    const isVid=asset.asset_type==="video";
+    const img=asset.thumb||isVid
+      ? `<img ${assetMediaAttrs(asset)} alt="" loading="lazy" onerror="this.parentElement.innerHTML='<div class=c-ph>${isVid?"VID":"IMG"}</div>'">${isVid&&asset.video_url?`<span class="play-icon">▶</span>`:""}`
+      : `<div class="c-ph">${isVid?"VID":"IMG"}</div>`;
+    return `<button type="button" class="c-thumb ${esc(vk)}${isVid?" video":""}" title="${esc(cap)}">${img}<span class="c-dot"></span></button>`;
   }).join("");
   const detail=assets.map(asset=>{
     const v=asset.verdict||{}, vk=v.key||"data";
     const cap=`${a.name||"Ad"} · ${asset.name||"Creative"}`;
-    const img=asset.thumb
-      ? `<img class="zoomable" src="${esc(asset.thumb)}" data-caption="${esc(cap)}" alt="" loading="lazy" onerror="this.outerHTML='<div class=c-ph>IMG</div>'">`
-      : `<div class="c-ph">${esc((asset.asset_type||"img").slice(0,3).toUpperCase())}</div>`;
+    const isVid=asset.asset_type==="video";
+    const img=asset.thumb||isVid
+      ? `<img ${assetMediaAttrs(asset)} alt="" loading="lazy" onerror="this.outerHTML='<div class=c-ph>${isVid?"VID":"IMG"}</div>'">${isVid&&asset.video_url?`<span class="play-icon">▶</span>`:""}`
+      : `<div class="c-ph">${isVid?"VID":"IMG"}</div>`;
     return `<div class="c-row">
-      <div>${img}</div>
+      <div style="position:relative">${img}</div>
       <div class="c-row-main">
         <div class="c-row-top"><span class="c-row-name">${esc(trunc(asset.name||"Creative",32))}</span></div>
         <div class="c-row-stats">${esc(assetStatsLine(asset,a))}</div>
@@ -668,7 +673,8 @@ function render(){
     note.innerHTML=`<b>Using cached data</b> — Meta sync failed (${esc(STALE_ERROR)}). Showing last good pull from ${fmtSync(SYNCED_AT)}.`;
   } else if(rows.length){
     note.style.display="block"; note.classList.remove("err");
-    note.innerHTML=`<b>Meta results:</b> ${scoringNote(rows)}`;
+    const ai=ME&&ME.ai_vision?` · <b>AI vision on</b> (${esc(ME.ai_model||"gpt-4o")})`:` · <span style="opacity:.85">AI vision off — add OPENAI_API_KEY in Render</span>`;
+    note.innerHTML=`<b>Meta results:</b> ${scoringNote(rows)}${ai}`;
   } else if(LEVEL==="campaigns"&&CAMPAIGNS.length){
     note.style.display="block"; note.classList.remove("err");
     note.innerHTML=`<b>${CAMPAIGNS.length} campaigns</b> · Click a campaign to see its ads, or switch to <b>Ad / creative level</b>.`;
@@ -724,23 +730,50 @@ function adThumbHTML(a, mini=false){
   if(!a.thumb) return mini?`<div class="mini empty-thumb"></div>`:`<div class="ph">No preview</div>`;
   const cap=esc(a.name||"Ad preview");
   const cls=mini?"mini zoomable":"zoomable";
-  return `<img class="${cls}" src="${a.thumb}" data-caption="${cap}" alt="${cap}" loading="lazy" title="Click to enlarge" onerror="this.outerHTML='${mini?`<div class=mini empty-thumb></div>`:`<div class=ph>No preview</div>`}'">`;
+  const isVideo=(a.assets||[]).some(x=>x.asset_type==="video"&&x.video_url)||false;
+  const videoUrl=(a.assets||[]).find(x=>x.video_url)?.video_url||"";
+  const attrs=videoUrl?` data-media-type="video" data-video-url="${esc(videoUrl)}"`:"";
+  return `<img class="${cls}" src="${a.thumb}" data-caption="${cap}"${attrs} alt="${cap}" loading="lazy" title="Click to enlarge" onerror="this.outerHTML='${mini?`<div class=mini empty-thumb></div>`:`<div class=ph>No preview</div>`}'">`;
 }
-function openLightbox(src,caption){
+function assetMediaAttrs(asset){
+  const cap=esc(asset.name||"Creative");
+  if(asset.asset_type==="video"&&asset.video_url){
+    return `class="zoomable" src="${esc(asset.thumb||"")}" data-media-type="video" data-video-url="${esc(asset.video_url)}" data-caption="${cap}"`;
+  }
+  return `class="zoomable" src="${esc(asset.thumb||"")}" data-caption="${cap}"`;
+}
+function openLightbox(src, caption, mediaType="image"){
   const lb=$("#lightbox");
-  $("#lightboxImg").src=src;
+  const img=$("#lightboxImg"), vid=$("#lightboxVideo");
   $("#lightboxCap").textContent=caption||"";
+  if(mediaType==="video" && src){
+    img.style.display="none"; img.removeAttribute("src");
+    vid.style.display="block"; vid.src=src; vid.play().catch(()=>{});
+  } else {
+    vid.pause(); vid.removeAttribute("src"); vid.load(); vid.style.display="none";
+    img.style.display="block"; img.src=src;
+  }
   lb.classList.add("open");
   lb.setAttribute("aria-hidden","false");
   document.body.style.overflow="hidden";
 }
 function closeLightbox(){
   const lb=$("#lightbox");
+  const vid=$("#lightboxVideo");
+  vid.pause(); vid.removeAttribute("src"); vid.load(); vid.style.display="none";
   lb.classList.remove("open");
   lb.setAttribute("aria-hidden","true");
   $("#lightboxImg").src="";
+  $("#lightboxImg").style.display="block";
   $("#lightboxCap").textContent="";
   document.body.style.overflow="";
+}
+function openMediaFromEl(el){
+  if(!el) return;
+  const isVideo=el.dataset.mediaType==="video";
+  const src=isVideo?(el.dataset.videoUrl||el.src):el.src;
+  if(!src) return;
+  openLightbox(src, el.dataset.caption||el.alt||"", isVideo?"video":"image");
 }
 function campaignCardHTML(c){
   const v=c.verdict, rows=currentRows();
@@ -827,9 +860,9 @@ document.addEventListener("click",e=>{
   if(e.target.id==="refresh") loadInsights(true);
   if(e.target.id==="lightboxClose"||e.target.id==="lightboxBg"){ closeLightbox(); return; }
   const zoom=e.target.closest(".zoomable");
-  if(zoom){ e.stopPropagation(); openLightbox(zoom.src, zoom.dataset.caption||zoom.alt); return; }
+  if(zoom){ e.stopPropagation(); openMediaFromEl(zoom); return; }
   const thumbBtn=e.target.closest(".c-thumb");
-  if(thumbBtn){ const z=thumbBtn.querySelector(".zoomable"); if(z){ e.preventDefault(); openLightbox(z.src, z.dataset.caption||""); return; } }
+  if(thumbBtn){ const z=thumbBtn.querySelector(".zoomable"); if(z){ e.preventDefault(); openMediaFromEl(z); return; } }
   const campCard=e.target.closest("[data-campaign]"); if(campCard&&LEVEL==="campaigns") drillIntoCampaign(campCard.dataset.campaign);
   const p=e.target.closest(".pill"); if(p){FILTER=p.dataset.f;document.querySelectorAll(".pill").forEach(x=>x.classList.remove("on"));p.classList.add("on");render();}
   const th=e.target.closest("th[data-col]"); if(th){SORT=th.dataset.col==="name"?"spend":th.dataset.col;$("#sort").value=["score","spend","days_live","calls","leads","cost_per_call","cost_per_lead","roas","ctr","cpc","cpm"].includes(SORT)?SORT:"spend";render();}

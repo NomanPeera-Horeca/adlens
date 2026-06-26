@@ -76,6 +76,7 @@ async def fetch_and_store(
         ad_meta = await meta.fetch_ads_meta(token, account_id, ad_ids)
         ads = meta.normalize(rows, ad_meta, account_id)
         ads = meta.attach_assets(ads, asset_rows)
+        await meta.resolve_asset_videos(token, ads)
         ads = scoring.score_all(ads)
         winners.attach_peer_winners(session, user_id, account_id, ads)
         await creative_ai.enrich_ads_with_insights(ads)

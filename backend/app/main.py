@@ -84,6 +84,8 @@ async def api_me(request: Request, session: Session = Depends(get_session)):
         "is_admin": admin.is_admin(user),
         "effective_plan": admin.effective_plan(user),
         "connected": bool(user.fb_token_enc),
+        "ai_vision": bool(settings.OPENAI_API_KEY),
+        "ai_model": settings.OPENAI_VISION_MODEL if settings.OPENAI_API_KEY else None,
     }
 
 
