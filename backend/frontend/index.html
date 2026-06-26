@@ -281,7 +281,31 @@ async function boot(){
   ME=await api("/api/me");
   renderUserbox();
   applyPlanRangeGate();
-  if(ME.authenticated && ME.connected){ $("#splash")&&($("#splash").remove()); await loadAccounts(); }
+  if(ME.authenticated && ME.connected){
+    localStorage.setItem("adlens_linked","1");
+    if(ME.name) localStorage.setItem("adlens_name",ME.name);
+    $("#splash")&&($("#splash").remove());
+    await loadAccounts();
+  } else if(ME.authenticated && !ME.connected){
+    showReturningSplash(ME.name,true);
+  } else {
+    showReturningSplash(localStorage.getItem("adlens_name")||"",false);
+  }
+}
+function showReturningSplash(name,reconnect){
+  const splash=$("#splash");
+  if(!splash) return;
+  const h=splash.querySelector("h2"), p=splash.querySelector("p"), btn=$("#connect"), demo=$("#demo");
+  if(reconnect){
+    h.textContent=name?`Welcome back, ${name.split(" ")[0]}`:"Welcome back";
+    p.textContent="Your Meta connection needs a quick refresh — one click and your dashboard is back.";
+    btn.textContent="Reconnect Facebook";
+  } else if(localStorage.getItem("adlens_linked")==="1"||ME?.returning){
+    h.textContent=name?`Welcome back, ${name.split(" ")[0]}`:"Welcome back";
+    p.textContent="Continue with Facebook to open your dashboard. Your account stays linked — no setup needed.";
+    btn.textContent="Continue with Facebook";
+  }
+  if(reconnect||localStorage.getItem("adlens_linked")==="1") demo&&(demo.style.display="none");
 }
 function applyPlanRangeGate(){
   const sel=$("#range"); if(!sel) return;

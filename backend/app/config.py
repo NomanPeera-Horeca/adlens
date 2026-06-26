@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     APP_NAME: str = "AdLens"
     ENV: str = "dev"                       # dev | prod
     SESSION_SECRET: str = "change-me-to-a-long-random-string"
+    SESSION_MAX_AGE: int = 400 * 24 * 60 * 60   # ~400 days (browser cap); refreshed on each visit
+    REMEMBER_MAX_AGE: int = 400 * 24 * 60 * 60  # restore session without re-clicking Facebook
+    TOKEN_REFRESH_DAYS: int = 14                # refresh Meta token when this many days left
     FRONTEND_URL: str = "http://localhost:8000"   # where to send users after login
     BASE_URL: str = "http://localhost:8000"       # this backend's public URL
 

@@ -8,7 +8,8 @@ import secrets
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Request, Depends
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
+from itsdangerous import BadSignature, TimestampSigner
 from sqlmodel import Session, select
 
 from . import meta, crypto
@@ -17,6 +18,90 @@ from .models import User
 from .config import settings
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+REMEMBER_COOKIE = "adlens_remember"
+_signer = TimestampSigner(settings.SESSION_SECRET)
+
+
+def _cookie_flags() -> dict:
+    return {
+        "httponly": True,
+        "secure": settings.ENV == "prod",
+        "samesite": "lax",
+        "path": "/",
+    }
+
+
+def sign_remember(user_id: int) -> str:
+    return _signer.sign(str(user_id).encode()).decode()
+
+
+def unsign_remember(value: str) -> int | None:
+    try:
+        raw = _signer.unsign(value, max_age=settings.REMEMBER_MAX_AGE)
+        return int(raw.decode())
+    except (BadSignature, ValueError):
+        return None
+
+
+def attach_remember_cookie(response: RedirectResponse | JSONResponse, user_id: int) -> None:
+    response.set_cookie(
+        REMEMBER_COOKIE,
+        sign_remember(user_id),
+        max_age=settings.REMEMBER_MAX_AGE,
+        **_cookie_flags(),
+    )
+
+
+def clear_remember_cookie(response: JSONResponse) -> None:
+    response.delete_cookie(REMEMBER_COOKIE, path="/")
+
+
+def touch_session(request: Request, user_id: int) -> None:
+    """Re-write session so the browser cookie Max-Age rolls forward on each visit."""
+    request.session["user_id"] = user_id
+
+
+def resolve_user(request: Request, session: Session) -> User | None:
+    """Current user from session, or auto-restore from the long-lived remember cookie."""
+    uid = request.session.get("user_id")
+    if not uid:
+        remembered = request.cookies.get(REMEMBER_COOKIE)
+        if remembered:
+            uid = unsign_remember(remembered)
+            if uid:
+                user = session.get(User, uid)
+                if user:
+                    touch_session(request, user.id)
+                    return user
+        return None
+    user = session.get(User, uid)
+    if not user:
+        return None
+    touch_session(request, user.id)
+    return user
+
+
+async def ensure_meta_token_fresh(session: Session, user: User) -> User:
+    """Refresh Meta long-lived token before it expires (~60 days)."""
+    if not user.fb_token_enc:
+        return user
+    threshold = datetime.utcnow() + timedelta(days=settings.TOKEN_REFRESH_DAYS)
+    if user.token_expires_at and user.token_expires_at > threshold:
+        return user
+    try:
+        token = crypto.decrypt(user.fb_token_enc)
+        refreshed = await meta.long_lived_token(token)
+        user.fb_token_enc = crypto.encrypt(refreshed["access_token"])
+        expires_in = refreshed.get("expires_in")
+        user.token_expires_at = (
+            datetime.utcnow() + timedelta(seconds=expires_in) if expires_in else None
+        )
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+    except Exception:
+        pass
+    return user
 
 
 def _auth_error(code: str) -> RedirectResponse:
@@ -47,7 +132,7 @@ async def fb_callback(request: Request, code: str = "", state: str = "",
         short = await meta.exchange_code_for_token(code)
         long = await meta.long_lived_token(short["access_token"])
         token = long["access_token"]
-        expires_in = long.get("expires_in")  # None for non-expiring tokens
+        expires_in = long.get("expires_in")
 
         profile = await meta.me(token)
 
@@ -63,8 +148,10 @@ async def fb_callback(request: Request, code: str = "", state: str = "",
         session.commit()
         session.refresh(user)
 
-        request.session["user_id"] = user.id
-        return RedirectResponse(settings.FRONTEND_URL + "/")
+        touch_session(request, user.id)
+        response = RedirectResponse(settings.FRONTEND_URL + "/")
+        attach_remember_cookie(response, user.id)
+        return response
     except Exception:
         return _auth_error("meta_exchange_failed")
 
@@ -72,4 +159,6 @@ async def fb_callback(request: Request, code: str = "", state: str = "",
 @router.post("/logout")
 def logout(request: Request):
     request.session.clear()
-    return {"ok": True}
+    response = JSONResponse({"ok": True})
+    clear_remember_cookie(response)
+    return response

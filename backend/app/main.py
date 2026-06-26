@@ -25,11 +25,16 @@ from . import meta, crypto, sync
 from . import meta_compliance
 from . import admin
 from .dates import FREE_RANGES, PRO_ONLY_RANGES, resolve_date_query
-from .auth import router as auth_router
+from .auth import router as auth_router, resolve_user, ensure_meta_token_fresh, REMEMBER_COOKIE
 
 app = FastAPI(title=settings.APP_NAME)
-app.add_middleware(SessionMiddleware, secret_key=settings.SESSION_SECRET,
-                   same_site="lax", https_only=(settings.ENV == "prod"))
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.SESSION_SECRET,
+    same_site="lax",
+    https_only=(settings.ENV == "prod"),
+    max_age=settings.SESSION_MAX_AGE,
+)
 app.add_middleware(CORSMiddleware, allow_origins=[settings.FRONTEND_URL],
                    allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 app.include_router(auth_router)
@@ -41,13 +46,17 @@ def _startup():
 
 
 def current_user(request: Request, session: Session = Depends(get_session)) -> User:
-    uid = request.session.get("user_id")
-    if not uid:
-        raise HTTPException(401, "Not signed in")
-    user = session.get(User, uid)
+    user = resolve_user(request, session)
     if not user:
         raise HTTPException(401, "Not signed in")
     return user
+
+
+async def current_user_fresh(request: Request, session: Session = Depends(get_session)) -> User:
+    user = resolve_user(request, session)
+    if not user:
+        raise HTTPException(401, "Not signed in")
+    return await ensure_meta_token_fresh(session, user)
 
 
 def user_token(user: User) -> str:
@@ -59,21 +68,27 @@ def user_token(user: User) -> str:
 # ----------------------------- API -----------------------------
 
 @app.get("/api/me")
-def api_me(request: Request, session: Session = Depends(get_session)):
-    uid = request.session.get("user_id")
-    if not uid:
-        return {"authenticated": False}
-    user = session.get(User, uid)
+async def api_me(request: Request, session: Session = Depends(get_session)):
+    user = resolve_user(request, session)
     if not user:
-        return {"authenticated": False}
-    return {"authenticated": True, "name": user.name, "email": user.email,
-            "plan": user.plan, "is_admin": admin.is_admin(user),
-            "effective_plan": admin.effective_plan(user),
-            "connected": bool(user.fb_token_enc)}
+        return {
+            "authenticated": False,
+            "returning": bool(request.cookies.get(REMEMBER_COOKIE)),
+        }
+    user = await ensure_meta_token_fresh(session, user)
+    return {
+        "authenticated": True,
+        "name": user.name,
+        "email": user.email,
+        "plan": user.plan,
+        "is_admin": admin.is_admin(user),
+        "effective_plan": admin.effective_plan(user),
+        "connected": bool(user.fb_token_enc),
+    }
 
 
 @app.get("/api/accounts")
-async def api_accounts(user: User = Depends(current_user)):
+async def api_accounts(user: User = Depends(current_user_fresh)):
     try:
         return {"accounts": await meta.list_ad_accounts(user_token(user))}
     except Exception as e:
@@ -84,7 +99,7 @@ async def api_accounts(user: User = Depends(current_user)):
 async def api_ad_image(
     account: str = Query(...),
     ad: str = Query(...),
-    user: User = Depends(current_user),
+    user: User = Depends(current_user_fresh),
 ):
     token = user_token(user)
     try:
@@ -133,7 +148,7 @@ async def api_insights(
     until: str = Query(""),
     refresh: bool = Query(False),
     session: Session = Depends(get_session),
-    user: User = Depends(current_user),
+    user: User = Depends(current_user_fresh),
 ):
     requested_range = range if range != "custom" else f"custom:{since}:{until}"
     cache_key, date_query = _resolve_insights_range(range, since, until)
