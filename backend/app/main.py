@@ -25,7 +25,16 @@ from . import meta, crypto, sync, winners
 from . import meta_compliance
 from . import admin
 from .dates import FREE_RANGES, PRO_ONLY_RANGES, resolve_date_query
-from .auth import router as auth_router, resolve_user, ensure_meta_token_fresh, REMEMBER_COOKIE
+from .auth import (
+    router as auth_router,
+    resolve_user,
+    resolve_actor,
+    ensure_meta_token_fresh,
+    REMEMBER_COOKIE,
+    MEMBER_REMEMBER_COOKIE,
+)
+from . import team as team_svc
+from .team_models import TeamMember
 
 app = FastAPI(title=settings.APP_NAME)
 app.add_middleware(
@@ -52,11 +61,23 @@ def current_user(request: Request, session: Session = Depends(get_session)) -> U
     return user
 
 
-async def current_user_fresh(request: Request, session: Session = Depends(get_session)) -> User:
-    user = resolve_user(request, session)
-    if not user:
+async def current_actor(request: Request, session: Session = Depends(get_session)):
+    actor = resolve_actor(request, session)
+    if not actor:
         raise HTTPException(401, "Not signed in")
-    return await ensure_meta_token_fresh(session, user)
+    actor.user = await ensure_meta_token_fresh(session, actor.user)
+    return actor
+
+
+async def current_user_fresh(request: Request, session: Session = Depends(get_session)) -> User:
+    actor = await current_actor(request, session)
+    return actor.user
+
+
+def owner_token(actor) -> str:
+    if not actor.user.fb_token_enc:
+        raise HTTPException(400, "No Meta connection")
+    return crypto.decrypt(actor.user.fb_token_enc)
 
 
 def user_token(user: User) -> str:
@@ -69,30 +90,81 @@ def user_token(user: User) -> str:
 
 @app.get("/api/me")
 async def api_me(request: Request, session: Session = Depends(get_session)):
-    user = resolve_user(request, session)
-    if not user:
+    actor = resolve_actor(request, session)
+    if not actor:
         return {
             "authenticated": False,
-            "returning": bool(request.cookies.get(REMEMBER_COOKIE)),
+            "returning": bool(
+                request.cookies.get(REMEMBER_COOKIE) or request.cookies.get(MEMBER_REMEMBER_COOKIE)
+            ),
         }
-    user = await ensure_meta_token_fresh(session, user)
-    return {
+    actor.user = await ensure_meta_token_fresh(session, actor.user)
+    user = actor.user
+    base = {
         "authenticated": True,
-        "name": user.name,
-        "email": user.email,
+        "name": actor.display_name,
+        "email": user.email if actor.is_owner else (actor.member.email if actor.member else ""),
         "plan": user.plan,
         "is_admin": admin.is_admin(user),
         "effective_plan": admin.effective_plan(user),
         "connected": bool(user.fb_token_enc),
         "ai_vision": bool(settings.OPENAI_API_KEY),
         "ai_model": settings.OPENAI_VISION_MODEL if settings.OPENAI_API_KEY else None,
+        "role": "owner" if actor.is_owner else "member",
+        "can_invite": actor.is_owner,
+        "can_refresh": True,
+        "workspace": actor.workspace.name if actor.workspace else "",
+        "owner_name": user.name if not actor.is_owner else None,
     }
+    if not actor.is_owner and actor.allowed_accounts is not None:
+        base["allowed_accounts"] = actor.allowed_accounts
+    return base
+
+
+@app.get("/api/team")
+async def api_team_list(session: Session = Depends(get_session), actor=Depends(current_actor)):
+    if not actor.is_owner:
+        raise HTTPException(403, "Only the workspace owner can manage team.")
+    ws = team_svc.ensure_workspace(session, actor.user)
+    members = session.exec(select(TeamMember).where(TeamMember.workspace_id == ws.id)).all()
+    return {"members": [team_svc.member_to_dict(m) for m in members]}
+
+
+@app.post("/api/team/invite")
+async def api_team_invite(
+    request: Request,
+    session: Session = Depends(get_session),
+    actor=Depends(current_actor),
+):
+    if not actor.is_owner:
+        raise HTTPException(403, "Only the workspace owner can invite teammates.")
+    body = await request.json()
+    name = (body.get("name") or "").strip()
+    email = (body.get("email") or "").strip()
+    account_ids = body.get("account_ids") or []
+    ws = team_svc.ensure_workspace(session, actor.user)
+    member = team_svc.create_invite(session, ws, name=name, email=email, account_ids=account_ids)
+    return team_svc.member_to_dict(member)
+
+
+@app.delete("/api/team/members/{member_id}")
+async def api_team_remove(member_id: int, session: Session = Depends(get_session), actor=Depends(current_actor)):
+    if not actor.is_owner:
+        raise HTTPException(403, "Only the workspace owner can remove teammates.")
+    ws = team_svc.ensure_workspace(session, actor.user)
+    member = session.get(TeamMember, member_id)
+    if not member or member.workspace_id != ws.id:
+        raise HTTPException(404, "Member not found.")
+    session.delete(member)
+    session.commit()
+    return {"ok": True}
 
 
 @app.get("/api/accounts")
-async def api_accounts(user: User = Depends(current_user_fresh)):
+async def api_accounts(actor=Depends(current_actor)):
     try:
-        return {"accounts": await meta.list_ad_accounts(user_token(user))}
+        accounts = await meta.list_ad_accounts(owner_token(actor))
+        return {"accounts": team_svc.filter_accounts(accounts, actor)}
     except Exception as e:
         raise HTTPException(502, f"Meta error: {e}")
 
@@ -101,9 +173,10 @@ async def api_accounts(user: User = Depends(current_user_fresh)):
 async def api_ad_image(
     account: str = Query(...),
     ad: str = Query(...),
-    user: User = Depends(current_user_fresh),
+    actor=Depends(current_actor),
 ):
-    token = user_token(user)
+    team_svc.assert_account_access(actor, account)
+    token = owner_token(actor)
     try:
         result = await meta.ad_image_source(token, ad, account_id=account)
     except Exception as e:
@@ -150,8 +223,10 @@ async def api_insights(
     until: str = Query(""),
     refresh: bool = Query(False),
     session: Session = Depends(get_session),
-    user: User = Depends(current_user_fresh),
+    actor=Depends(current_actor),
 ):
+    team_svc.assert_account_access(actor, account)
+    user = actor.user
     requested_range = range if range != "custom" else f"custom:{since}:{until}"
     cache_key, date_query = _resolve_insights_range(range, since, until)
     effective_key, effective_query = cache_key, date_query
@@ -168,7 +243,7 @@ async def api_insights(
         return _insights_response(payload, effective_key, requested_range, True, cached.synced_at,
                                   stale=False, error="", range_limited=range_limited)
 
-    token = user_token(user)
+    token = owner_token(actor)
     try:
         run = await sync.fetch_and_store(session, user.id, account, effective_key, effective_query, token)
     except Exception as e:

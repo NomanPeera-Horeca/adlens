@@ -184,6 +184,20 @@
   .status-live.none{color:var(--muted);background:var(--slate-bg)}
   @media(max-width:1100px){.kpis{grid-template-columns:repeat(3,1fr)}}
   @media(max-width:560px){.kpis{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr 1fr}}
+  .team-modal{display:none;position:fixed;inset:0;z-index:9000;align-items:center;justify-content:center;padding:20px}
+  .team-modal.open{display:flex}
+  .team-modal-bg{position:absolute;inset:0;background:rgba(15,27,45,.55)}
+  .team-panel{position:relative;background:#fff;border-radius:14px;max-width:520px;width:100%;max-height:85vh;overflow:auto;padding:20px;box-shadow:var(--shadow)}
+  .team-panel h3{margin:0 0 6px;font-size:18px}
+  .team-panel .sub{font-size:12px;color:var(--muted);margin-bottom:16px}
+  .team-list{display:flex;flex-direction:column;gap:8px;margin:12px 0 18px}
+  .team-row{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fafbfc;font-size:12px}
+  .team-row .meta{color:var(--muted);font-size:11px;margin-top:2px}
+  .acct-picks{display:flex;flex-direction:column;gap:6px;max-height:160px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:10px;margin:8px 0 14px;background:#fafbfc}
+  .acct-picks label{display:flex;align-items:flex-start;gap:8px;font-size:12px;cursor:pointer}
+  .invite-link{display:flex;gap:8px;margin-top:8px}
+  .invite-link input{flex:1;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px}
+  .member-badge{font-size:10px;background:#e8f0fe;color:#1a4fad;padding:2px 6px;border-radius:4px;font-weight:700;margin-left:4px}
 </style>
 </head>
 <body>
@@ -260,6 +274,29 @@
         <button class="btn ghost" id="demo" style="border:1px solid var(--line);color:var(--muted);background:var(--card)">See demo</button>
       </div>
     </div>
+  </div>
+</div>
+
+<div id="teamModal" class="team-modal" aria-hidden="true">
+  <div class="team-modal-bg" id="teamModalBg"></div>
+  <div class="team-panel">
+    <h3>Team access</h3>
+    <p class="sub">Invite teammates — they log in with a link, no Facebook needed. Pick which ad accounts they can see and refresh.</p>
+    <div id="teamList" class="team-list"></div>
+    <hr style="border:none;border-top:1px solid var(--line);margin:16px 0"/>
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--muted);margin-bottom:8px">New invite</div>
+    <label style="font-size:11px;color:var(--muted)">Name</label>
+    <input id="inviteName" placeholder="Sarah — marketing" style="width:100%;margin:4px 0 10px;padding:9px 11px;border:1px solid var(--line);border-radius:8px"/>
+    <label style="font-size:11px;color:var(--muted)">Email (optional)</label>
+    <input id="inviteEmail" type="email" placeholder="sarah@company.com" style="width:100%;margin:4px 0 10px;padding:9px 11px;border:1px solid var(--line);border-radius:8px"/>
+    <label style="font-size:11px;color:var(--muted)">Ad accounts they can access</label>
+    <div id="inviteAccounts" class="acct-picks"></div>
+    <button class="btn primary" id="createInvite" type="button" style="width:100%">Create invite link</button>
+    <div id="inviteResult" style="display:none;margin-top:12px">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:4px">Share this link (Slack, email, WhatsApp):</div>
+      <div class="invite-link"><input id="inviteUrl" readonly /><button class="btn" id="copyInvite" type="button">Copy</button></div>
+    </div>
+    <button class="btn ghost" id="closeTeam" type="button" style="margin-top:14px;width:100%;border:1px solid var(--line);color:var(--muted)">Close</button>
   </div>
 </div>
 
@@ -527,6 +564,11 @@ const AUTH_ERRORS={
 async function boot(){
   const params=new URLSearchParams(location.search);
   const err=params.get("error");
+  const inviteToken=params.get("invite");
+  if(inviteToken){
+    await showInviteSplash(inviteToken);
+    return;
+  }
   if(err&&AUTH_ERRORS[err]){
     const note=$("#trackingNotice");
     note.classList.add("err");
@@ -540,6 +582,9 @@ async function boot(){
   if(ME.authenticated && ME.connected){
     localStorage.setItem("adlens_linked","1");
     if(ME.name) localStorage.setItem("adlens_name",ME.name);
+    $("#splash")&&($("#splash").remove());
+    await loadAccounts();
+  } else if(ME.authenticated && ME.role==="member"){
     $("#splash")&&($("#splash").remove());
     await loadAccounts();
   } else if(ME.authenticated && !ME.connected){
@@ -607,10 +652,65 @@ function renderUserbox(){
   if(ME&&ME.authenticated){
     const initial=(ME.name||"?").trim().charAt(0).toUpperCase();
     const planLabel=ME.is_admin?"Admin":(ME.plan==="pro"?"Pro":"Free");
-    b.innerHTML=`<div class="who"><span class="av">${initial}</span><span>${esc(ME.name||"")} · ${planLabel}</span>
-      <button class="btn ghost" id="logout" style="padding:6px 10px">Sign out</button></div>`;
+    const memberTag=ME.role==="member"?`<span class="member-badge">Team</span>`:"";
+    const teamBtn=ME.can_invite?`<button class="btn ghost" id="teamBtn" style="padding:6px 10px">Team</button>`:"";
+    b.innerHTML=`<div class="who"><span class="av">${initial}</span><span>${esc(ME.name||"")}${memberTag} · ${ME.role==="member"?"Member":planLabel}</span>
+      ${teamBtn}<button class="btn ghost" id="logout" style="padding:6px 10px">Sign out</button></div>`;
     $("#logout").onclick=async()=>{await api("/api/logout",{method:"POST"});location.reload();};
+    if(ME.can_invite) $("#teamBtn").onclick=openTeamModal;
   } else { b.innerHTML=""; }
+}
+async function showInviteSplash(token){
+  let preview;
+  try{ preview=await api(`/auth/invite/${token}/preview`); }
+  catch(e){ $("#output").innerHTML=`<div class="empty">Invite link invalid or expired.</div>`; return; }
+  const splash=$("#splash")||$("#output");
+  splash.innerHTML=`<div class="splash">
+    <h2>Join ${esc(preview.owner_name)}'s AdLens</h2>
+    <p>You've been invited to view <b>${preview.accounts_count}</b> ad account${preview.accounts_count!==1?"s":""}. No Facebook login needed — same dashboard, selected accounts only.</p>
+    <label style="display:block;text-align:left;max-width:320px;margin:0 auto 8px;font-size:11px;color:var(--muted)">Your name</label>
+    <input id="joinName" value="${esc(preview.name||"")}" placeholder="Your name" style="width:100%;max-width:320px;margin:0 auto 14px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;display:block"/>
+    <div class="row2"><button class="btn primary" id="acceptInvite">Open dashboard</button></div>
+  </div>`;
+  $("#acceptInvite").onclick=async()=>{
+    const name=$("#joinName").value.trim();
+    await api(`/auth/invite/${token}/accept?name=${encodeURIComponent(name)}`,{method:"POST"});
+    history.replaceState({},"",location.pathname);
+    location.reload();
+  };
+}
+async function openTeamModal(){
+  $("#teamModal").classList.add("open");
+  $("#inviteResult").style.display="none";
+  const [team, accts]=await Promise.all([api("/api/team"), api("/api/accounts")]);
+  const list=$("#teamList");
+  const members=(team.members||[]);
+  list.innerHTML=members.length?members.map(m=>`<div class="team-row"><div><div><b>${esc(m.name)}</b>${m.accepted?"":" · pending"}</div><div class="meta">${m.accounts.length} account${m.accounts.length!==1?"s":""}${m.email?" · "+esc(m.email):""}</div></div>
+    ${m.accepted?`<button class="btn ghost" data-rm="${m.id}" style="padding:4px 8px;font-size:11px">Remove</button>`:`<button class="btn" data-copy="${esc(m.invite_url)}" style="padding:4px 8px;font-size:11px">Copy link</button>`}</div>`).join(""):"<div style='font-size:12px;color:var(--muted)'>No teammates yet.</div>";
+  list.querySelectorAll("[data-rm]").forEach(btn=>btn.onclick=async()=>{ if(!confirm("Remove this teammate?")) return; await api(`/api/team/members/${btn.dataset.rm}`,{method:"DELETE"}); openTeamModal(); });
+  list.querySelectorAll("[data-copy]").forEach(btn=>btn.onclick=()=>{ navigator.clipboard.writeText(btn.dataset.copy); btn.textContent="Copied!"; });
+  const picks=$("#inviteAccounts");
+  picks.innerHTML=(accts.accounts||[]).map(a=>{
+    const id=String(a.account_id);
+    return `<label><input type="checkbox" value="${esc(id)}" checked /> ${esc(a.name||"Account")} · ${esc(a.currency||"?")}</label>`;
+  }).join("")||"<span style='font-size:12px;color:var(--muted)'>No ad accounts found.</span>";
+}
+function closeTeamModal(){ $("#teamModal").classList.remove("open"); }
+async function createInvite(){
+  const name=$("#inviteName").value.trim(), email=$("#inviteEmail").value.trim();
+  const account_ids=[...$("#inviteAccounts").querySelectorAll("input:checked")].map(x=>x.value);
+  if(!account_ids.length){ alert("Select at least one ad account."); return; }
+  const r=await api("/api/team/invite",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,email,account_ids})});
+  $("#inviteUrl").value=r.invite_url||"";
+  $("#inviteResult").style.display="block";
+  $("#inviteName").value=""; $("#inviteEmail").value="";
+  const team=await api("/api/team");
+  const list=$("#teamList");
+  const members=(team.members||[]);
+  list.innerHTML=members.map(m=>`<div class="team-row"><div><div><b>${esc(m.name)}</b>${m.accepted?"":" · pending"}</div><div class="meta">${m.accounts.length} account${m.accounts.length!==1?"s":""}</div></div>
+    ${m.accepted?`<button class="btn ghost" data-rm="${m.id}" style="padding:4px 8px;font-size:11px">Remove</button>`:`<button class="btn" data-copy="${esc(m.invite_url)}" style="padding:4px 8px;font-size:11px">Copy link</button>`}</div>`).join("");
+  list.querySelectorAll("[data-rm]").forEach(btn=>btn.onclick=async()=>{ if(!confirm("Remove?")) return; await api(`/api/team/members/${btn.dataset.rm}`,{method:"DELETE"}); openTeamModal(); });
+  list.querySelectorAll("[data-copy]").forEach(btn=>btn.onclick=()=>{ navigator.clipboard.writeText(btn.dataset.copy); btn.textContent="Copied!"; });
 }
 async function loadAccounts(){
   const r=await api("/api/accounts");
@@ -665,7 +765,10 @@ function render(){
   const hasPurch=rows.some(a=>(a.purchases||0)>0||(a.pvalue||0)>0);
   const totalCalls=totConv(rows,"calls"), totalLeads=totConv(rows,"leads");
   const note=$("#trackingNotice");
-  if(RANGE_LIMITED){
+  if(ME.role==="member"&&ME.owner_name){
+    note.style.display="block"; note.classList.remove("err");
+    note.innerHTML=`<b>Team view</b> · ${esc(ME.owner_name)}'s workspace · ${(ME.allowed_accounts||[]).length} ad account(s) · Refresh enabled`;
+  } else if(RANGE_LIMITED){
     note.style.display="block"; note.classList.remove("err");
     note.innerHTML="<b>Free plan:</b> That date range needs Pro. Showing last 30 days instead. Upgrade for 90-day, custom, and full history views.";
   } else if(STALE_ERROR){
@@ -858,6 +961,9 @@ document.addEventListener("click",e=>{
   if(e.target.id==="connect") location.href="/auth/facebook/login";
   if(e.target.id==="demo") demoData();
   if(e.target.id==="refresh") loadInsights(true);
+  if(e.target.id==="closeTeam"||e.target.id==="teamModalBg") closeTeamModal();
+  if(e.target.id==="createInvite") createInvite();
+  if(e.target.id==="copyInvite"){ navigator.clipboard.writeText($("#inviteUrl").value); e.target.textContent="Copied!"; }
   if(e.target.id==="lightboxClose"||e.target.id==="lightboxBg"){ closeLightbox(); return; }
   const zoom=e.target.closest(".zoomable");
   if(zoom){ e.stopPropagation(); openMediaFromEl(zoom); return; }

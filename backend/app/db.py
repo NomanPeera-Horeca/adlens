@@ -11,7 +11,8 @@ engine = create_engine(db_url, echo=False, connect_args=connect_args)
 
 def init_db() -> None:
     # For a real product, switch to Alembic migrations. This is fine to start.
-    import app.models  # noqa: F401  (register models)
+    import app.models  # noqa: F401
+    import app.team_models  # noqa: F401  (register models)
     SQLModel.metadata.create_all(engine)
 
 
