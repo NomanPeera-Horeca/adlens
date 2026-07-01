@@ -182,6 +182,9 @@
   .camp-head .c-name{height:auto;margin:0;flex:1}
   .status-live{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--green);background:var(--green-bg);padding:4px 8px;border-radius:20px;white-space:nowrap}
   .status-live.none{color:var(--muted);background:var(--slate-bg)}
+  .status-paused{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#5a6478;background:#eef1f6;padding:4px 8px;border-radius:20px;white-space:nowrap;border:1px solid #d5dbe6}
+  .status-review{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#7a5410;background:var(--amber-bg);padding:4px 8px;border-radius:20px;white-space:nowrap;border:1px solid #efd9ad}
+  .card.paused-card,.camp-card.paused-card{border-style:dashed;background:#fafbfc}
   @media(max-width:1100px){.kpis{grid-template-columns:repeat(3,1fr)}}
   @media(max-width:560px){.kpis{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr 1fr}}
   .team-modal{display:none;position:fixed;inset:0;z-index:9000;align-items:center;justify-content:center;padding:20px}
@@ -336,25 +339,36 @@ function liveLabel(a,short=false){
 function isAdDelivering(a){
   return !!(a.is_delivering || a.status==="ACTIVE");
 }
+function entityStatusLabel(x){
+  if(x.status_label) return x.status_label;
+  const map={ACTIVE:"Live",PAUSED:"Paused",CAMPAIGN_PAUSED:"Campaign paused",ADSET_PAUSED:"Ad set paused",PENDING_REVIEW:"In review",WITH_ISSUES:"Has issues",PREAPPROVED:"Pre-approved"};
+  return map[x.status]||x.status||"Unknown";
+}
+function entityStatusBadge(x){
+  const label=entityStatusLabel(x);
+  if(isAdDelivering(x)) return `<span class="status-live">● Live</span>`;
+  if(x.status==="PENDING_REVIEW"||x.status==="WITH_ISSUES"||x.status==="PREAPPROVED")
+    return `<span class="status-review">${esc(label)}</span>`;
+  const when=fmtLiveDate(x.status_updated);
+  const text=when?`${label} · ${when}`:label;
+  return `<span class="status-paused" title="${esc(label)}">⏸ ${esc(text)}</span>`;
+}
 function deliveryThumbBadge(a){
   if(isAdDelivering(a)) return `<span class="delivery-badge live">● Live</span>`;
+  const label=entityStatusLabel(a);
   const when=fmtLiveDate(a.status_updated);
-  const tip=a.status_label||"Paused";
-  const label=when?`Paused · ${when}`:"Paused";
-  return `<span class="delivery-badge paused" title="${esc(tip)}">${esc(label)}</span>`;
+  const text=when?`${label} · ${when}`:label;
+  return `<span class="delivery-badge paused" title="${esc(label)}">⏸ ${esc(text)}</span>`;
 }
 function deliveryMetaLine(a){
   if(isAdDelivering(a)) return `<div class="delivery-meta on">Delivering now</div>`;
+  const label=entityStatusLabel(a);
   const when=fmtLiveDate(a.status_updated);
-  const reason=a.status_label&&a.status_label!=="Paused"?` (${a.status_label})`:"";
-  if(when) return `<div class="delivery-meta off">Paused · ${esc(when)}${esc(reason)}</div>`;
-  return `<div class="delivery-meta off">${esc(a.status_label||"Not delivering")}</div>`;
+  if(when) return `<div class="delivery-meta off">⏸ ${esc(label)} · ${esc(when)}</div>`;
+  return `<div class="delivery-meta off">⏸ ${esc(label)}</div>`;
 }
 function deliveryTableCell(a){
-  if(isAdDelivering(a)) return `<span class="status-live">● Live</span>`;
-  const when=fmtLiveDate(a.status_updated);
-  const tip=esc(a.status_label||"Paused");
-  return `<span class="status-live none" title="${tip}">${when?`Paused · ${when}`:"Paused"}</span>`;
+  return entityStatusBadge(a);
 }
 function hasAnyConv(rows){
   return rows.some(a=>(a.purchases||0)>0||(a.pvalue||0)>0||(a.calls||0)>0||(a.leads||0)>0||(a.contacts||0)>0);
@@ -525,7 +539,7 @@ function setLevel(l){
   $("#levelCampaigns").classList.toggle("on",l==="campaigns");
   $("#levelAds").classList.toggle("on",l==="ads");
   $("#campFilter").style.display=l==="ads"?"inline-block":"none";
-  $("#levelHint").textContent=l==="campaigns"?"All active campaigns for this period":"Individual ads / creatives with spend in this period";
+  $("#levelHint").textContent=l==="campaigns"?"Live, paused, and in-review campaigns for this account":"Ads with spend, plus live or paused ads still gathering data";
   $("#search").placeholder=l==="campaigns"?"Filter campaigns…":"Filter ads…";
   render();
 }
@@ -823,7 +837,7 @@ function render(){
     return (y[SORT]||0)-(x[SORT]||0);
   });
   const out=$("#output");
-  const emptyMsg=LEVEL==="campaigns"?"No active campaigns in this ad account. Hit Refresh after deploy.":"No ads with spend in this range"+(CAMP_FILTER?" for this campaign.":"");
+  const emptyMsg=LEVEL==="campaigns"?"No live campaigns in this ad account. Check the ad account dropdown, then hit Refresh.":"No ads yet — new launches appear here once live in Meta (even before spend). Hit Refresh after publishing.";
   if(!rows.length){out.innerHTML=`<div class="empty">${emptyMsg}</div>`;return;}
   if(!list.length){out.innerHTML=`<div class="empty">No ${LEVEL==="campaigns"?"campaigns":"creatives"} match.</div>`;return;}
   if(LEVEL==="campaigns") out.innerHTML=VIEW==="cards"?`<div class="grid">${list.map(campaignCardHTML).join("")}</div>`:campaignTableHTML(list);
@@ -880,22 +894,23 @@ function openMediaFromEl(el){
 }
 function campaignCardHTML(c){
   const v=c.verdict, rows=currentRows();
-  const live=c.status==="ACTIVE"?"status-live":"status-live none";
+  const pausedCls=isAdDelivering(c)?"":" paused-card";
   const extra=convCardRows(c).map(r=>`<div class="meta-line">${r[0]}: <b>${r[1]}</b>${r[2]?` · ${r[2]}`:""}</div>`).join("");
-  return `<div class="card camp-card v-${v.key}" data-campaign="${esc(c.name)}" title="Click to view ads in this campaign">
+  return `<div class="card camp-card v-${v.key}${pausedCls}" data-campaign="${esc(c.name)}" title="Click to view ads in this campaign">
    <div class="card-body">
    <div class="card-head"><div class="c-name" title="${esc(c.name)}">${esc(c.name)}</div><span class="vbadge ${v.key}">${v.label}</span></div>
-   <div class="c-meta"><span class="${live}">${esc(c.status||"—")}</span> · ${num(c.impressions)} impr</div>
+   <div class="c-meta">${entityStatusBadge(c)} · ${num(c.impressions)} impr</div>
    ${metricGridHTML(c,rows)}
    ${extra}
    ${actionHTML(v)}
    </div></div>`;
 }
 function campaignTableHTML(list){
-  const cols=[["name","Campaign"],["calls","Calls"],["cost_per_call","$/Call"],["ctr","CTR"],["spend","Spend"],["score","Verdict"],["action","Action"]];
+  const cols=[["name","Campaign"],["status","Status"],["calls","Calls"],["cost_per_call","$/Call"],["ctr","CTR"],["spend","Spend"],["score","Verdict"],["action","Action"]];
   const th=cols.map(c=>`<th data-col="${c[0]}">${c[1]}</th>`).join("");
   const rows=list.map(c=>{const v=c.verdict;
-    return `<tr class="camp-row" data-campaign="${esc(c.name)}" style="cursor:pointer" title="Click to view ads in this campaign"><td style="text-align:left;font-weight:600">${esc(trunc(c.name,44))}</td>
+    return `<tr class="camp-row${isAdDelivering(c)?"":" paused-card"}" data-campaign="${esc(c.name)}" style="cursor:pointer" title="Click to view ads in this campaign"><td style="text-align:left;font-weight:600">${esc(trunc(c.name,44))}</td>
+    <td style="text-align:left">${entityStatusBadge(c)}</td>
     <td class="num">${c.calls!=null?num(c.calls):"0"}</td>
     <td class="num">${c.cost_per_call?usd(c.cost_per_call):"—"}</td>
     <td class="num ${c.ctr>=4?"good":""}">${c.spend>0?pct(c.ctr):"—"}</td>
@@ -909,14 +924,14 @@ function cardHTML(a){
   const ageShort=liveLabel(a,true);
   const ageBadge=ageShort?`<span class="live-badge" title="${esc(liveLabel(a))}">${esc(ageShort)}</span>`:"";
   const extra=convCardRows(a).map(r=>`<div class="meta-line">${r[0]}: <b>${r[1]}</b>${r[2]?` · ${r[2]}`:""}</div>`).join("");
-  const delivery=isAdDelivering(a)?`<span style="color:var(--green)">● Live</span>`:(fmtLiveDate(a.status_updated)?`Paused · ${fmtLiveDate(a.status_updated)}`:"Paused");
-  return `<div class="card v-${v.key}">
+  const pausedCls=isAdDelivering(a)?"":" paused-card";
+  return `<div class="card v-${v.key}${pausedCls}">
    <div class="thumb">${t}${deliveryThumbBadge(a)}${ageBadge}<span class="badge ${v.key}">${v.label}</span></div>
    <div class="card-body">
    <div class="card-head"><div class="c-name" title="${esc(a.name)}">${esc(a.name)}</div></div>
    ${badgeRowHTML(a)}
    <div class="c-meta">${esc(trunc(a.campaign||"",52))}</div>
-   <div class="meta-line">${delivery}${ageShort?` · ${esc(ageShort)} old`:""}</div>
+   <div class="meta-line">${entityStatusBadge(a)}${ageShort?` · ${esc(ageShort)} old`:""}</div>
    ${metricGridHTML(a,rows)}
    ${extra}
    ${peerWinnersHTML(a)}
@@ -925,10 +940,11 @@ function cardHTML(a){
    </div></div>`;
 }
 function tableHTML(list){
-  const cols=[["name","Creative"],["calls","Calls"],["cost_per_call","$/Call"],["ctr","CTR"],["spend","Spend"],["score","Verdict"],["action","Action"]];
+  const cols=[["name","Creative"],["status","Status"],["calls","Calls"],["cost_per_call","$/Call"],["ctr","CTR"],["spend","Spend"],["score","Verdict"],["action","Action"]];
   const th=cols.map(c=>`<th data-col="${c[0]}">${c[1]}</th>`).join("");
   const rows=list.map(a=>{const v=a.verdict,m=adThumbHTML(a,true);
-    return `<tr><td class="creative">${m}<span>${esc(trunc(a.name,36))}</span></td>
+    return `<tr class="${isAdDelivering(a)?"":"paused-card"}"><td class="creative">${m}<span>${esc(trunc(a.name,36))}</span></td>
+    <td style="text-align:left">${entityStatusBadge(a)}</td>
     <td class="num">${a.calls!=null?num(a.calls):"0"}</td>
     <td class="num">${a.cost_per_call?usd(a.cost_per_call):"—"}</td>
     <td class="num ${a.ctr>=4?"good":""}">${pct(a.ctr)}</td>

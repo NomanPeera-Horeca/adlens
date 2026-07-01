@@ -71,10 +71,15 @@ async def fetch_and_store(
         rows = await meta.insights(token, account_id, date_query)
         asset_rows = await meta.fetch_asset_insights(token, account_id, date_query)
         catalog = await meta.list_active_campaigns(token, account_id)
+        live_ads = await meta.list_live_ads(token, account_id)
         camp_rows = await meta.campaign_insights(token, account_id, date_query)
-        ad_ids = [r.get("ad_id") for r in rows if r.get("ad_id")]
+        ad_ids = list({
+            *(str(r.get("ad_id")) for r in rows if r.get("ad_id")),
+            *(str(a.get("id")) for a in live_ads if a.get("id")),
+        })
         ad_meta = await meta.fetch_ads_meta(token, account_id, ad_ids)
         ads = meta.normalize(rows, ad_meta, account_id)
+        ads = meta.merge_live_ads(ads, live_ads, ad_meta, account_id)
         ads = meta.attach_assets(ads, asset_rows)
         await meta.resolve_asset_videos(token, ads)
         ads = scoring.score_all(ads)

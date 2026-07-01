@@ -74,6 +74,11 @@ STATUS_LABELS = {
     "PENDING_REVIEW": "In review",
     "WITH_ISSUES": "Has issues",
 }
+# Campaigns/ads in these states should appear even before insights show spend.
+LIVE_DELIVERY_STATUSES = ["ACTIVE", "PENDING_REVIEW", "WITH_ISSUES", "PREAPPROVED"]
+PAUSED_DELIVERY_STATUSES = ["PAUSED", "CAMPAIGN_PAUSED", "ADSET_PAUSED"]
+VISIBLE_CAMPAIGN_STATUSES = LIVE_DELIVERY_STATUSES + ["PAUSED"]
+VISIBLE_AD_STATUSES = LIVE_DELIVERY_STATUSES + PAUSED_DELIVERY_STATUSES
 PREVIEW_FORMATS = (
     "DESKTOP_FEED_STANDARD",
     "MOBILE_FEED_STANDARD",
@@ -207,14 +212,35 @@ async def _paginate(token: str, url: str, params: dict) -> list[dict]:
 
 
 async def list_active_campaigns(token: str, account_id: str) -> list[dict]:
-    """All campaigns currently in ACTIVE delivery state."""
+    """Live, in-review, and paused campaigns visible in Ads Manager."""
     account_id = account_id.replace("act_", "")
     url = f"{BASE}/act_{account_id}/campaigns"
     params = {
-        "fields": "id,name,effective_status,status",
+        "fields": "id,name,effective_status,status,created_time,updated_time",
         "limit": 500,
         "access_token": token,
-        "filtering": '[{"field":"effective_status","operator":"IN","value":["ACTIVE"]}]',
+        "filtering": json.dumps([{
+            "field": "effective_status",
+            "operator": "IN",
+            "value": VISIBLE_CAMPAIGN_STATUSES,
+        }]),
+    }
+    return await _paginate(token, url, params)
+
+
+async def list_live_ads(token: str, account_id: str) -> list[dict]:
+    """Live, in-review, and paused ads — includes zero-spend ads missing from insights."""
+    account_id = account_id.replace("act_", "")
+    url = f"{BASE}/act_{account_id}/ads"
+    params = {
+        "fields": "id,name,effective_status,created_time,updated_time,campaign{id,name},adset{id,name}",
+        "limit": 500,
+        "access_token": token,
+        "filtering": json.dumps([{
+            "field": "effective_status",
+            "operator": "IN",
+            "value": VISIBLE_AD_STATUSES,
+        }]),
     }
     return await _paginate(token, url, params)
 
@@ -257,17 +283,21 @@ def _metrics_from_insight(row: dict | None) -> dict:
 
 
 def merge_active_campaigns(catalog: list[dict], insight_rows: list[dict]) -> list[dict]:
-    """ACTIVE campaigns now + any campaign with delivery in the selected period."""
+    """Visible campaigns now + any campaign with delivery in the selected period."""
     by_id = {r["campaign_id"]: r for r in insight_rows if r.get("campaign_id")}
     seen: set[str] = set()
     out: list[dict] = []
 
-    def append(cid: str, name: str, status: str, row: dict | None):
+    def append(cid: str, name: str, status: str, row: dict | None, updated_time: str | None = None):
         metrics = _metrics_from_insight(row)
+        status_updated = _parse_meta_time(updated_time)
         out.append({
             "campaign_id": cid,
             "name": name or "Untitled campaign",
             "status": status,
+            "status_label": _status_label(status),
+            "is_delivering": _is_delivering(status),
+            "status_updated": status_updated.isoformat() if status_updated else None,
             **metrics,
         })
 
@@ -275,7 +305,14 @@ def merge_active_campaigns(catalog: list[dict], insight_rows: list[dict]) -> lis
         cid = c["id"]
         seen.add(cid)
         row = by_id.get(cid)
-        append(cid, c.get("name") or (row or {}).get("campaign_name"), c.get("effective_status") or "ACTIVE", row)
+        status = c.get("effective_status") or "ACTIVE"
+        append(
+            cid,
+            c.get("name") or (row or {}).get("campaign_name"),
+            status,
+            row,
+            c.get("updated_time"),
+        )
 
     for cid, row in by_id.items():
         if cid in seen:
@@ -926,6 +963,68 @@ async def fetch_asset_insights(token: str, account_id: str, date_query: dict | N
     image_rows = await asset_insights(token, account_id, date_query, breakdown="image_asset")
     video_rows = await asset_insights(token, account_id, date_query, breakdown="video_asset")
     return image_rows + video_rows
+
+
+def _ad_thumb(ad_id: str, info: dict, account_id: str) -> str | None:
+    fast_url = info.get("thumb")
+    if isinstance(fast_url, str) and fast_url.startswith("http"):
+        return fast_url
+    if ad_id and account_id:
+        return f"/api/ad-image?account={account_id}&ad={ad_id}"
+    return None
+
+
+def _stub_ad_from_live(row: dict, info: dict, account_id: str) -> dict:
+    ad_id = str(row.get("id") or "")
+    campaign = row.get("campaign") if isinstance(row.get("campaign"), dict) else {}
+    adset = row.get("adset") if isinstance(row.get("adset"), dict) else {}
+    merged_info = {**info, "created_time": row.get("created_time") or info.get("created_time")}
+    since = _live_since(merged_info)
+    days = _days_live(since)
+    status = row.get("effective_status") or info.get("effective_status") or ""
+    status_updated = _parse_meta_time(row.get("updated_time") or info.get("updated_time"))
+    return {
+        "ad_id": ad_id,
+        "name": row.get("name") or info.get("name") or "Untitled ad",
+        "campaign": campaign.get("name") or "Unknown campaign",
+        "adset": adset.get("name") or "",
+        "thumb": _ad_thumb(ad_id, info, account_id),
+        "status": status,
+        "status_label": _status_label(status),
+        "is_delivering": _is_delivering(status),
+        "status_updated": status_updated.isoformat() if status_updated else None,
+        "live_since": since.isoformat() if since else None,
+        "days_live": days,
+        "spend": 0.0,
+        "impressions": 0,
+        "clicks": 0,
+        "ctr": 0.0,
+        "cpc": 0.0,
+        "cpm": 0.0,
+        "roas": None,
+        "calls": 0,
+        "leads": 0,
+        "purchases": 0,
+        "pvalue": 0.0,
+        "contacts": 0,
+        "landing_views": 0,
+        "messages": 0,
+        "registrations": 0,
+    }
+
+
+def merge_live_ads(ads: list[dict], live_rows: list[dict], ad_meta: dict, account_id: str) -> list[dict]:
+    """Add live/in-review ads that have no insights spend yet (common for same-day launches)."""
+    account_id = account_id.replace("act_", "")
+    by_id = {str(a.get("ad_id")): a for a in ads if a.get("ad_id")}
+    for row in live_rows:
+        ad_id = str(row.get("id") or "")
+        if not ad_id or ad_id in by_id:
+            continue
+        by_id[ad_id] = _stub_ad_from_live(row, ad_meta.get(ad_id) or {}, account_id)
+    out = list(by_id.values())
+    out.sort(key=lambda x: (-float(x.get("spend") or 0), (x.get("name") or "").lower()))
+    return out
 
 
 def normalize(rows: list[dict], ad_meta: dict, account_id: str = "") -> list[dict]:
